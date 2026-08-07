@@ -1,4 +1,7 @@
 const grid = document.querySelector('#projects-grid');
+const i18n = window.CAD_I18N;
+const t = (key, values) => i18n.t(key, values);
+let loadedProjects = [];
 
 async function api(path, options = {}) {
   const response = await fetch(path, options);
@@ -13,15 +16,16 @@ function formatDate(iso) {
   const now = new Date();
   const diffMs = now - date;
   const diffDays = Math.floor(diffMs / 86400000);
-  if (diffDays === 0) return 'Today';
-  if (diffDays === 1) return 'Yesterday';
-  if (diffDays < 7) return `${diffDays} days ago`;
-  return date.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+  if (diffDays === 0) return t('projects.today');
+  if (diffDays === 1) return t('projects.yesterday');
+  if (diffDays < 7) return t('projects.daysAgo', {count: diffDays});
+  const locale = i18n.getLanguage() === 'zh-CN' ? 'zh-CN' : 'en-US';
+  return date.toLocaleDateString(locale, { year: 'numeric', month: 'short', day: 'numeric' });
 }
 
 function statusLabel(status) {
-  const labels = { none: 'Empty', has_model: 'Has Model', finalized: 'Finalized', stale: 'Stale' };
-  return labels[status] || status;
+  const translated = t(`projects.status.${status}`);
+  return translated === `projects.status.${status}` ? status : translated;
 }
 
 function statusClass(status) {
@@ -34,14 +38,14 @@ function cardTemplate(project) {
       <a href="/project/${encodeURIComponent(project.name)}" class="card-main">
         <h3 class="card-name">${escapeHTML(project.name)}</h3>
         <div class="card-meta">
-          <span class="card-date">Created ${formatDate(project.created_at)}</span>
-          <span class="card-date">Modified ${formatDate(project.modified_at)}</span>
+          <span class="card-date">${escapeHTML(t('projects.created', {date: formatDate(project.created_at)}))}</span>
+          <span class="card-date">${escapeHTML(t('projects.modified', {date: formatDate(project.modified_at)}))}</span>
         </div>
         <span class="model-badge ${statusClass(project.model_status)}">${statusLabel(project.model_status)}</span>
       </a>
       <div class="card-actions">
-        <button class="icon-btn rename-btn" title="Rename" data-name="${escapeHTML(project.name)}" aria-label="Rename ${escapeHTML(project.name)}">✏️</button>
-        <button class="icon-btn delete-btn" title="Delete" data-name="${escapeHTML(project.name)}" aria-label="Delete ${escapeHTML(project.name)}">🗑️</button>
+        <button class="icon-btn rename-btn" title="${escapeHTML(t('projects.rename'))}" data-name="${escapeHTML(project.name)}" aria-label="${escapeHTML(t('projects.rename'))} ${escapeHTML(project.name)}">✏️</button>
+        <button class="icon-btn delete-btn" title="${escapeHTML(t('projects.delete'))}" data-name="${escapeHTML(project.name)}" aria-label="${escapeHTML(t('projects.delete'))} ${escapeHTML(project.name)}">🗑️</button>
       </div>
     </div>
   `;
@@ -56,9 +60,10 @@ function escapeHTML(str) {
 async function loadProjects() {
   try {
     const data = await api('/api/projects');
+    loadedProjects = data.projects || [];
     renderProjects(data.projects);
   } catch (error) {
-    grid.innerHTML = `<div class="empty-projects"><p class="error">Failed to load projects: ${escapeHTML(error.message)}</p></div>`;
+    grid.innerHTML = `<div class="empty-projects"><p class="error">${escapeHTML(t('projects.loadFailed', {error: error.message}))}</p></div>`;
   }
 }
 
@@ -67,9 +72,9 @@ function renderProjects(projects) {
     grid.innerHTML = `
       <div class="empty-projects">
         <div class="empty-icon">◇</div>
-        <h2>No projects yet</h2>
-        <p>Create your first CAD project to get started.</p>
-        <button id="empty-cta" class="primary">Get Started</button>
+        <h2>${escapeHTML(t('projects.emptyTitle'))}</h2>
+        <p>${escapeHTML(t('projects.emptyText'))}</p>
+        <button id="empty-cta" class="primary">${escapeHTML(t('projects.getStarted'))}</button>
       </div>
     `;
     document.querySelector('#empty-cta')?.addEventListener('click', openNewProjectModal);
@@ -162,12 +167,12 @@ renameForm.addEventListener('submit', async (e) => {
 /* ── Delete Confirm ── */
 
 const deleteModal = document.querySelector('#delete-confirm');
-const deleteName = document.querySelector('#delete-project-name');
+const deleteConfirmText = document.querySelector('#delete-confirm-text');
 let deleteTarget = '';
 
 function openDeleteConfirm(name) {
   deleteTarget = name;
-  deleteName.textContent = name;
+  deleteConfirmText.textContent = t('projects.deleteConfirm', {name});
   deleteModal.classList.remove('hidden');
 }
 
@@ -188,3 +193,11 @@ document.querySelector('#confirm-delete').addEventListener('click', async () => 
 /* ── Init ── */
 
 loadProjects();
+
+window.addEventListener('cad-language-change', () => {
+  i18n.applyTranslations();
+  renderProjects(loadedProjects);
+  if (!deleteModal.classList.contains('hidden') && deleteTarget) {
+    deleteConfirmText.textContent = t('projects.deleteConfirm', {name: deleteTarget});
+  }
+});

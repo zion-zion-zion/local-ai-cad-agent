@@ -2,6 +2,8 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { STLLoader } from 'three/addons/loaders/STLLoader.js';
 
+const t = (key, values) => window.CAD_I18N.t(key, values);
+
 export class CadViewer {
   constructor(container, dimensions) {
     this.container = container;
@@ -46,7 +48,7 @@ export class CadViewer {
     this.renderer.render(this.scene, this.camera);
   }
 
-  clear(message = 'No preview yet') {
+  clear(message = t('chat.noPreview')) {
     if (this.model) {
       this.scene.remove(this.model);
       this.model.geometry.dispose();
@@ -78,16 +80,16 @@ export class CadViewer {
         geometry => {
           if (sequence !== this.loadSequence) {
             geometry.dispose();
-            reject(new Error('Preview loading was superseded by another project.'));
+            reject(new Error(t('viewer.superseded')));
             return;
           }
           try {
             const positions = geometry.getAttribute('position');
-            if (!positions || positions.count < 3) throw new Error('The preview contains no triangles.');
+            if (!positions || positions.count < 3) throw new Error(t('viewer.noTriangles'));
             geometry.computeBoundingBox();
             const size = geometry.boundingBox.getSize(new THREE.Vector3());
             if (![size.x, size.y, size.z].every(Number.isFinite) || Math.max(size.x, size.y, size.z) <= 0) {
-              throw new Error('The preview has invalid dimensions.');
+              throw new Error(t('viewer.invalidDimensions'));
             }
             this._hideSpinner();
             this.clear();
@@ -110,7 +112,7 @@ export class CadViewer {
           } catch (error) {
             geometry.dispose();
             this._hideSpinner();
-            if (!this.model) this.clear('Preview could not be displayed');
+            if (!this.model) this.clear(t('viewer.displayFailed'));
             reject(error);
           }
         },
@@ -118,9 +120,9 @@ export class CadViewer {
         error => {
           if (sequence === this.loadSequence) {
             this._hideSpinner();
-            if (!this.model) this.clear('Preview could not be displayed');
+            if (!this.model) this.clear(t('viewer.displayFailed'));
           }
-          reject(new Error(error?.message || 'The preview file could not be loaded.'));
+          reject(new Error(error?.message || t('viewer.fileFailed')));
         },
       );
     });
@@ -154,7 +156,7 @@ export class CadViewer {
   }
 
   captureScreenshot(view = 'current', proximity = 1.0) {
-    if (!this.model) throw new Error('No model to capture.');
+    if (!this.model) throw new Error(t('viewer.noModel'));
     const scale = Number.isFinite(proximity) && proximity > 0 ? proximity : 1.0;
     const directions = {
       front: [0, 0, 1],

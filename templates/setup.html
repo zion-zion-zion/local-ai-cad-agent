@@ -1,86 +1,68 @@
 <!doctype html>
-<html lang="en">
+<html lang="zh-CN">
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Setup — Local AI CAD Agent</title>
+    <title data-i18n="setup.title">设置 — 本地 AI CAD 助手</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
   </head>
   <body>
     <main class="setup-page">
       <div class="setup-card">
-        <div class="setup-icon">◇</div>
-        <h1>Welcome to Local AI CAD Agent</h1>
-        <p>Configure your OpenRouter connection to get started. You need an <a href="https://openrouter.ai/keys" target="_blank" rel="noopener">OpenRouter API key</a>.</p>
+        <div class="setup-header"><div class="setup-icon">◇</div><button id="language-toggle" type="button" class="language-toggle" aria-label="切换为英文" title="切换为英文">EN</button></div>
+        <h1 data-i18n="setup.welcome">欢迎使用本地 AI CAD 助手</h1>
+        <p data-i18n="setup.description">配置一个兼容 OpenAI 的 Chat Completions 接口即可开始使用。支持 OpenAI、OpenRouter、vLLM 及其他兼容服务，也支持旧版 OpenRouter API Key 设置。</p>
 
         <form id="setup-form" class="setup-form">
           <div class="setup-field">
-            <label for="api-key">OpenRouter API Key</label>
-            <input id="api-key" type="password" placeholder="sk-or-v1-…" required autocomplete="off">
-            <p class="hint">Your key is stored locally and never sent anywhere except OpenRouter.</p>
+            <label for="base-url" data-i18n="setup.baseUrl">API 基础 URL</label>
+            <input id="base-url" type="url" value="{{ base_url }}" data-i18n-placeholder="setup.baseUrlPlaceholder" placeholder="https://api.openai.com/v1" required autocomplete="url">
+            <p class="hint" data-i18n="setup.baseUrlHint">使用服务商兼容 OpenAI 的基础 URL；如果服务商要求，请包含 /v1。</p>
           </div>
 
           <div class="setup-field">
-            <label for="model">Model</label>
-            <select id="model" required>
-              <option value="">Select a model…</option>
-              <option value="openai/gpt-4o-mini">openai/gpt-4o-mini (fast, affordable)</option>
-              <option value="google/gemini-2.0-flash-001">google/gemini-2.0-flash-001</option>
-              <option value="google/gemini-3.6-flash">google/gemini-3.6-flash</option>
-              <option value="openai/gpt-4o">openai/gpt-4o (more capable)</option>
-              <option value="anthropic/claude-3.5-sonnet">anthropic/claude-3.5-sonnet</option>
-              <option value="__custom__">Other model (enter below)</option>
-            </select>
+            <label for="model" data-i18n="setup.model">模型</label>
+            <input id="model" type="text" value="{{ model }}" data-i18n-placeholder="setup.modelPlaceholder" placeholder="gpt-4o-mini" required autocomplete="off">
+            <p class="hint" data-i18n="setup.modelHint">填写配置接口接受的模型 ID。</p>
           </div>
 
-          <div id="custom-model-field" class="setup-field hidden">
-            <label for="custom-model">Custom Model ID</label>
-            <input id="custom-model" type="text" placeholder="e.g. openai/gpt-4o" autocomplete="off">
+          <div class="setup-field">
+            <label for="api-key" data-i18n="setup.apiKey">API 密钥</label>
+            <input id="api-key" type="password" data-i18n-placeholder="setup.apiKeyPlaceholder" placeholder="sk-…" required autocomplete="off">
+            <p class="hint" data-i18n="setup.apiKeyHint">密钥只保存在本地，并且只发送到配置的基础 URL。</p>
           </div>
 
           <div id="setup-error" class="setup-error hidden"></div>
 
           <div class="setup-actions">
-            <button type="submit">Save and Continue</button>
+            <button type="submit" data-i18n="setup.save">保存并继续</button>
           </div>
         </form>
 
-        <p class="setup-footer">You can also edit <code>.env</code> and <code>config.yaml</code> manually.</p>
+        <p class="setup-footer" data-i18n="setup.footer">你也可以手动编辑 .env 和 config.yaml。</p>
       </div>
     </main>
 
+    <script src="{{ url_for('static', filename='js/i18n.js') }}"></script>
     <script>
       const form = document.querySelector('#setup-form');
-      const modelSelect = document.querySelector('#model');
-      const customField = document.querySelector('#custom-model-field');
-      const customModel = document.querySelector('#custom-model');
       const errorBox = document.querySelector('#setup-error');
-
-      modelSelect.addEventListener('change', () => {
-        if (modelSelect.value === '__custom__') {
-          customField.classList.remove('hidden');
-          customModel.required = true;
-        } else {
-          customField.classList.add('hidden');
-          customModel.required = false;
-          customModel.value = '';
-        }
-      });
 
       form.addEventListener('submit', async (e) => {
         e.preventDefault();
         errorBox.classList.add('hidden');
+        const baseUrl = document.querySelector('#base-url').value.trim();
         const apiKey = document.querySelector('#api-key').value.trim();
-        const model = modelSelect.value === '__custom__' ? customModel.value.trim() : modelSelect.value;
-        if (!apiKey || !model) return;
+        const model = document.querySelector('#model').value.trim();
+        if (!baseUrl || !apiKey || !model) return;
         try {
           const resp = await fetch('/api/setup', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({api_key: apiKey, model: model}),
+            body: JSON.stringify({api_key: apiKey, base_url: baseUrl, model: model}),
           });
           const data = await resp.json();
-          if (!resp.ok) throw new Error(data.error || 'Setup failed.');
+          if (!resp.ok) throw new Error(data.error || window.CAD_I18N.t('setup.failed'));
           window.location.href = '/';
         } catch (err) {
           errorBox.textContent = err.message;

@@ -3,7 +3,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/Python-3.10%2B-blue)](https://www.python.org/)
 
-A local-first web app that lets you **chat with an AI agent to create parametric CAD models**. Built with [build123d](https://github.com/gumyr/build123d) for solid modeling, [Three.js](https://threejs.org/) for in-browser preview, and [OpenRouter](https://openrouter.ai/) for LLM access — all sandboxed with Bubblewrap.
+A local-first web app that lets you **chat with an AI agent to create parametric CAD models**. Built with [build123d](https://github.com/gumyr/build123d) for solid modeling, [Three.js](https://threejs.org/) for in-browser preview, and any OpenAI-compatible Chat Completions API for LLM access — all sandboxed with Bubblewrap.
 
 <p align="center">
   <em>(screenshot coming soon)</em>
@@ -26,7 +26,7 @@ A local-first web app that lets you **chat with an AI agent to create parametric
 
 - **Python** 3.10+
 - **Linux** with `bubblewrap` and `libseccomp2`
-- **OpenRouter API key** ([get one here](https://openrouter.ai/keys))
+- **API key for an OpenAI-compatible endpoint** (for example [OpenAI](https://platform.openai.com/api-keys) or [OpenRouter](https://openrouter.ai/keys))
 
 ## 🚀 Quick Start
 
@@ -36,7 +36,7 @@ git clone https://github.com/neuronaline/local-ai-cad-agent.git
 cd local-ai-cad-agent
 ./install.sh
 
-# Add your OPENROUTER_API_KEY to .env (or use the setup page on first launch)
+# Add your OPENAI_API_KEY to .env (or use the setup page on first launch)
 
 # Run
 ./run.sh
@@ -51,7 +51,7 @@ local-ai-cad-agent/
 ├── app.py                     # Flask HTTP/SSE server
 ├── agent/
 │   ├── core.py                # AgentRunner tool-calling loop
-│   ├── openrouter.py          # Streaming chat-completions client
+│   ├── openai_client.py       # Provider-neutral streaming chat client
 │   ├── finalize.py            # Model validation & atomic export
 │   ├── revisions.py           # Immutable model revisions, builds & rollback
 │   ├── constraints.py         # User-owned parameter & feature pins
@@ -81,15 +81,26 @@ local-ai-cad-agent/
 
 Copy `config.example.yaml` to `config.yaml` (git-ignored). Personal overrides go in `~/.cad-agent/config.yaml` — the two files merge, personal settings win.
 
+The default configuration targets `https://api.openai.com/v1`. To use another
+OpenAI-compatible service, change `llm.base_url` and `llm.model`, and set the
+corresponding key environment variable in `llm.api_key_env`. The endpoint must
+expose the standard `POST /chat/completions` route and support standard
+messages, tools/function calling, and streaming SSE. OpenRouter-specific
+options are sent only when the configured endpoint or legacy configuration
+indicates OpenRouter.
+
 | Key | Default | Description |
 |---|---|---|
 | `workspace_root` | `~/CAD-Agent-Projects` | Where project data lives |
 | `agent.tool_call_limit` | `30` | Max tool rounds per task |
 | `agent.revision_retention_count` | `0` | Model revisions to retain (`0` keeps all) |
-| `openrouter.model` | `google/gemini-3.6-flash` | OpenRouter model slug |
-| `openrouter.reasoning_effort` | `medium` | `minimal`, `low`, `medium`, or `high` |
-| `openrouter.provider` | `google-vertex/global` | Preferred provider slug |
-| `openrouter.force_provider` | `true` | Disable provider fallbacks |
+| `llm.base_url` | `https://api.openai.com/v1` | OpenAI-compatible API base URL |
+| `llm.api_key_env` | `OPENAI_API_KEY` | Environment variable containing the API key |
+| `llm.model` | `gpt-4o-mini` | Model ID accepted by the endpoint |
+| `llm.timeout_seconds` | `60` | HTTP request timeout |
+| `llm.reasoning_effort` | empty | Optional OpenAI/OpenRouter reasoning setting |
+| `llm.provider` | empty | Optional OpenRouter provider preference; ignored elsewhere |
+| `llm.force_provider` | `false` | Enforce the OpenRouter provider preference |
 | `server.host` / `server.port` | `127.0.0.1` / `5000` | Bind address |
 | `ui.show_info_messages` | `true` | Show tool-status info messages in chat |
 

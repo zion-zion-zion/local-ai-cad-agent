@@ -48,7 +48,7 @@ from agent.quality.store import (
 )
 from agent.revisions import RevisionIntegrityError, RevisionStore
 from agent.sandbox import _BWRAP, seccomp_filter_fd
-from agent.settings import Settings, load_settings
+from agent.settings import Settings, load_settings, resolve_api_key
 from agent.tools.cad_tool import CadTool
 
 PROJECT_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
@@ -190,9 +190,9 @@ def _model_status(project_dir: Path) -> str:
 
 
 def _api_key_configured(settings: Settings) -> bool:
-    """Return True when a non-empty OpenRouter API key is available."""
-    key = os.getenv("OPENROUTER_API_KEY", "")
-    return bool(key.strip()) and bool(settings.openrouter_model.strip())
+    """Return True when a key and model are configured for the LLM endpoint."""
+    key, _ = resolve_api_key(settings)
+    return bool(key) and bool(settings.model.strip())
 
 
 def _project_root() -> Path:
@@ -203,12 +203,12 @@ def _run_preflight(settings: Settings) -> dict[str, Any]:
     """Return a dict with preflight check results."""
     checks: dict[str, bool | str] = {}
 
-    # OpenRouter API key
-    api_key = os.getenv("OPENROUTER_API_KEY", "").strip()
+    # API key for the configured OpenAI-compatible endpoint.
+    api_key, _ = resolve_api_key(settings)
     checks["api_key"] = bool(api_key)
 
     # Model configured
-    checks["model_configured"] = bool(settings.openrouter_model.strip())
+    checks["model_configured"] = bool(settings.model.strip())
 
     # Workspace writable
     try:
@@ -277,9 +277,6 @@ def _project_modified_at(project_dir: Path) -> str:
     return datetime.fromtimestamp(modified, tz=timezone.utc).isoformat()
 
 
-_ENV_API_KEY_LINE = re.compile(r"^[ \t]*OPENROUTER_API_KEY[ \t]*=[ \t]*(.*)$")
-
-
 def _reject_newlines(value: str, name: str) -> None:
     if "\n" in value or "\r" in value:
         raise ValueError(f"{name} must not contain line breaks.")
@@ -305,33 +302,37 @@ def _atomic_write_text(path: Path, content: str) -> None:
         raise
 
 
-def _save_env_key(env_path: Path, api_key: str) -> None:
-    """Write OPENROUTER_API_KEY to .env, preserving other lines.
-
-    The key is matched strictly (`OPENROUTER_API_KEY=...` assignments only,
-    never a prefix such as `OPENROUTER_API_KEY_FOO`) and the file is replaced
-    atomically so a crash cannot leave a truncated .env behind.
-    """
+def _save_env_key(env_path: Path, api_key: str, env_name: str = "OPENAI_API_KEY") -> None:
+    """Write the configured API key variable to .env, preserving other lines."""
     _reject_newlines(api_key, "API key")
+    _reject_newlines(env_name, "API key environment variable")
+    env_pattern = re.compile(rf"^[ \t]*{re.escape(env_name)}[ \t]*=[ \t]*(.*)$")
     lines: list[str] = []
     if env_path.is_file():
         lines = env_path.read_text(encoding="utf-8").splitlines(keepends=True)
     new_lines: list[str] = []
     found = False
     for line in lines:
-        if _ENV_API_KEY_LINE.match(line):
-            new_lines.append(f"OPENROUTER_API_KEY={api_key}\n")
+        if env_pattern.match(line):
+            new_lines.append(f"{env_name}={api_key}\n")
             found = True
         else:
             new_lines.append(line)
     if not found:
-        new_lines.append(f"OPENROUTER_API_KEY={api_key}\n")
+        new_lines.append(f"{env_name}={api_key}\n")
     _atomic_write_text(env_path, "".join(new_lines))
 
 
-def _save_config_model(config_path: Path, model: str) -> None:
-    """Set openrouter.model in config.yaml, preserving the rest."""
+def _save_config_connection(
+    config_path: Path,
+    base_url: str,
+    model: str,
+    api_key_env: str,
+) -> None:
+    """Set the provider-neutral LLM connection in config.yaml."""
+    _reject_newlines(base_url, "Base URL")
     _reject_newlines(model, "Model")
+    _reject_newlines(api_key_env, "API key environment variable")
     if config_path.is_file():
         with config_path.open("r", encoding="utf-8") as fh:
             data = yaml.safe_load(fh) or {}
@@ -339,14 +340,30 @@ def _save_config_model(config_path: Path, model: str) -> None:
         data = {}
     if not isinstance(data, dict):
         data = {}
-    data.setdefault("openrouter", {})
-    if not isinstance(data["openrouter"], dict):
-        data["openrouter"] = {}
-    data["openrouter"]["model"] = model
+    data.setdefault("llm", {})
+    if not isinstance(data["llm"], dict):
+        data["llm"] = {}
+    data["llm"].update({"base_url": base_url.rstrip("/"), "model": model, "api_key_env": api_key_env})
     _atomic_write_text(
         config_path,
         yaml.dump(data, default_flow_style=False, allow_unicode=True),
     )
+
+
+def _setup_api_key_env(settings: Settings, env_path: Path) -> str:
+    """Choose the key variable, recognizing an old .env.example when present."""
+    if settings.api_key_env != "OPENAI_API_KEY":
+        return settings.api_key_env
+    if env_path.exists():
+        return settings.api_key_env
+    example_path = env_path.with_name(".env.example")
+    try:
+        example = example_path.read_text(encoding="utf-8")
+    except OSError:
+        return settings.api_key_env
+    if "OPENROUTER_API_KEY" in example and "OPENAI_API_KEY" not in example:
+        return "OPENROUTER_API_KEY"
+    return settings.api_key_env
 
 
 def create_app(settings: Settings | None = None) -> Flask:
@@ -443,27 +460,38 @@ def create_app(settings: Settings | None = None) -> Flask:
         current = app.config["SETTINGS"]
         if _api_key_configured(current):
             return redirect(url_for("index"))
-        return render_template("setup.html")
+        return render_template(
+            "setup.html",
+            base_url=current.base_url,
+            model=current.model,
+        )
 
     @app.post("/api/setup")
     def setup_save():
         payload = request.get_json(silent=True) or {}
         api_key = str(payload.get("api_key", "")).strip()
-        model = str(payload.get("model", "")).strip()
+        current = app.config["SETTINGS"]
+        base_url = str(payload.get("base_url", current.base_url)).strip()
+        model = str(payload.get("model", current.model)).strip()
         if not api_key:
             return jsonify({"error": "An API key is required."}), 400
+        if not base_url:
+            return jsonify({"error": "A base URL is required."}), 400
         if not model:
             return jsonify({"error": "A model name is required."}), 400
         if "\n" in api_key or "\r" in api_key:
             return jsonify({"error": "The API key must not contain line breaks."}), 400
+        if "\n" in base_url or "\r" in base_url:
+            return jsonify({"error": "The base URL must not contain line breaks."}), 400
         if "\n" in model or "\r" in model:
             return jsonify({"error": "The model name must not contain line breaks."}), 400
         root = _project_root()
         env_path = root / ".env"
         config_path = root / "config.yaml"
+        api_key_env = _setup_api_key_env(current, env_path)
         try:
-            _save_env_key(env_path, api_key)
-            _save_config_model(config_path, model)
+            _save_env_key(env_path, api_key, api_key_env)
+            _save_config_connection(config_path, base_url, model, api_key_env)
         except ValueError as error:
             return jsonify({"error": str(error)}), 400
         except OSError as error:

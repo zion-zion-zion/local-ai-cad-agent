@@ -1,5 +1,8 @@
 import { CadViewer } from './viewer.js';
 
+const i18n = window.CAD_I18N;
+const t = (key, values) => i18n.t(key, values);
+
 const feed = document.querySelector('#chat-feed');
 const chatForm = document.querySelector('#chat-form');
 const message = document.querySelector('#message');
@@ -24,6 +27,7 @@ const reportIssueBtn = document.querySelector('#report-issue');
 const continueEditingBtn = document.querySelector('#continue-editing');
 const issueModal = document.querySelector('#issue-modal');
 const issueForm = document.querySelector('#issue-form');
+let isFinalizing = false;
 const agentStreams = new Map();
 const streamedTools = new Map();
 const toolMessages = new Map();
@@ -94,8 +98,8 @@ function addMessage(text, type = 'agent', options = {}) {
     item.innerHTML = `
       <div class="message-meta">
         <span class="agent-mark">AI</span>
-        <span class="message-author">Agent</span>
-        <span class="message-state">${options.streaming ? 'Responding' : ''}</span>
+        <span class="message-author">${t('chat.agent')}</span>
+        <span class="message-state">${options.streaming ? t('chat.responding') : ''}</span>
       </div>
       <div class="message-content"></div>
     `;
@@ -131,9 +135,14 @@ function formatPayload(value) {
 function updateToolMessage(item, data) {
   if (data.tool) item.querySelector('.tool-name').textContent = data.tool;
   const status = data.status || 'preparing';
+  const statusLabels = {
+    preparing: t('chat.preparing'), running: t('chat.running'), completed: t('chat.complete'),
+    error: t('chat.error'), stopped: t('chat.stopped'), info: t('chat.info'), started: t('chat.started'),
+  };
+  const statusLabel = statusLabels[status] || status;
   item.dataset.status = status;
-  item.querySelector('.tool-status').textContent = status;
-  item.querySelector('.tool-pulse').setAttribute('aria-label', status);
+  item.querySelector('.tool-status').textContent = statusLabel;
+  item.querySelector('.tool-pulse').setAttribute('aria-label', statusLabel);
   const argumentsBlock = item.querySelector('.tool-arguments');
   const resultBlock = item.querySelector('.tool-result');
   const argumentsText = Object.hasOwn(data, 'arguments')
@@ -148,9 +157,9 @@ function updateToolMessage(item, data) {
   resultBlock.closest('.tool-section').hidden = !resultText;
   item.open = status === 'running' || status === 'preparing' || status === 'error';
   item.dataset.raw = [
-    `${data.tool || 'tool'}: ${status}`,
-    argumentsText && `Arguments:\n${argumentsText}`,
-    resultText && `Result:\n${resultText}`,
+    `${data.tool || t('chat.tool')}: ${statusLabel}`,
+    argumentsText && `${t('chat.arguments')}:\n${argumentsText}`,
+    resultText && `${t('chat.result')}:\n${resultText}`,
   ].filter(Boolean).join('\n\n');
 }
 
@@ -162,14 +171,14 @@ function addToolMessage(data = {}) {
     item.className = 'message tool';
     item.innerHTML = `
       <summary>
-        <span class="tool-pulse" aria-label="preparing"></span>
-        <span class="tool-name">tool</span>
-        <span class="tool-status">preparing</span>
+        <span class="tool-pulse" aria-label="${t('chat.preparing')}"></span>
+        <span class="tool-name">${t('chat.tool')}</span>
+        <span class="tool-status">${t('chat.preparing')}</span>
         <span class="tool-chevron">⌄</span>
       </summary>
       <div class="tool-detail">
-        <div class="tool-section"><span>Arguments</span><pre class="tool-arguments"></pre></div>
-        <div class="tool-section"><span>Result</span><pre class="tool-result"></pre></div>
+        <div class="tool-section"><span>${t('chat.arguments')}</span><pre class="tool-arguments"></pre></div>
+        <div class="tool-section"><span>${t('chat.result')}</span><pre class="tool-result"></pre></div>
       </div>
     `;
     feed.querySelector('.empty-state')?.remove();
@@ -190,7 +199,7 @@ function setThinking(visible) {
   if (!visible) return;
   const indicator = document.createElement('div');
   indicator.className = 'thinking-indicator';
-  indicator.setAttribute('aria-label', 'AI is thinking');
+  indicator.setAttribute('aria-label', t('chat.thinking'));
   indicator.innerHTML = '<span></span><span></span><span></span>';
   feed.querySelector('.empty-state')?.remove();
   feed.append(indicator);
@@ -200,13 +209,13 @@ function setThinking(visible) {
 async function api(path, options) {
   const response = await fetch(path, options);
   const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(data.error || 'Request failed');
+  if (!response.ok) throw new Error(data.error || t('chat.requestFailed'));
   return data;
 }
 
 async function loadCurrentPreview(previewId = '') {
   if (!currentProject) {
-    viewer.clear('Select or create a project to begin.');
+    viewer.clear(t('chat.createProjectFirst'));
     return;
   }
   const project = currentProject;
@@ -333,7 +342,7 @@ acceptDesignBtn.addEventListener('click', async () => {
       body: JSON.stringify({decision: 'accepted'}),
     });
     hideDecisionBar();
-    addMessage('Design accepted.');
+    addMessage(t('chat.accepted'));
   } catch (error) {
     addMessage(error.message, 'error');
   }
@@ -375,7 +384,7 @@ issueForm.addEventListener('submit', async event => {
     });
     hideDecisionBar();
     closeIssueModal();
-    addMessage('Issue reported — ask the agent to fix it.');
+    addMessage(t('chat.issueReported'));
   } catch (error) {
     addMessage(error.message, 'error');
   } finally {
@@ -391,7 +400,7 @@ async function loadCurrentState() {
     if (q.questions) {
       const firstQ = q.questions[0] || {};
       const preview = q.questions.length > 1
-        ? `${q.title || 'Questions'} (${q.questions.length} fields)`
+        ? `${q.title || t('chat.questions')} (${t('chat.fields', {count: q.questions.length})})`
         : firstQ.question || '';
       if (preview) addMessage(preview);
     } else if (q.question) {
@@ -429,7 +438,7 @@ async function loadHistory(projectName) {
     if (!data.events.length) {
       const empty = document.createElement('div');
       empty.className = 'empty-state';
-      empty.textContent = `Project "${projectName}" selected. Describe a part to begin.`;
+      empty.textContent = t('chat.projectSelected', {name: projectName});
       feed.appendChild(empty);
     }
   } catch (error) {
@@ -455,7 +464,7 @@ function addInfoMessage(type, data = {}) {
       call_id: `usage-${crypto.randomUUID()}`,
       tool: 'usage',
       status: 'completed',
-      result: `Prompt ${data.prompt_tokens ?? '—'} · Completion ${data.completion_tokens ?? '—'} · Cached ${cache}`,
+      result: `${t('chat.promptTokens')} ${data.prompt_tokens ?? '—'} · ${t('chat.completionTokens')} ${data.completion_tokens ?? '—'} · ${t('chat.cachedTokens')} ${cache}`,
     });
   }
   if (type === 'agent_stopped') {
@@ -463,7 +472,7 @@ function addInfoMessage(type, data = {}) {
       call_id: `stopped-${crypto.randomUUID()}`,
       tool: 'agent',
       status: 'stopped',
-      result: 'Agent task stopped.',
+      result: t('chat.agentStopped'),
     });
   }
 }
@@ -477,7 +486,7 @@ message.addEventListener('keydown', (e) => {
 
 chatForm.addEventListener('submit', async event => {
   event.preventDefault();
-  if (!currentProject) return addMessage('Create a project first.', 'error');
+  if (!currentProject) return addMessage(t('chat.createProjectFirst'), 'error');
   const text = message.value.trim();
   if (!text) return;
   const btn = chatForm.querySelector('button[type="submit"]');
@@ -501,18 +510,18 @@ chatForm.addEventListener('submit', async event => {
       return;
     }
     if (response.attachments?.length) {
-      addMessage(`${response.attachments.length} reference image(s) uploaded.`, 'tool');
+      addMessage(t('chat.uploaded', {count: response.attachments.length}), 'tool');
     }
     selectedFiles = [];
     attachments.value = '';
-    attachmentLabel.textContent = 'Attach';
+    attachmentLabel.textContent = t('chat.attach');
   } catch (error) {
     const isConflict = error.message.includes('already running') || error.message.includes('pending question');
     if (isConflict) {
       setThinking(false);
       addMessage(error.message, 'error');
     } else {
-      addMessage('Connection issue — retrying…', 'tool');
+      addMessage(t('chat.connectionRetry'), 'tool');
       await new Promise(resolve => setTimeout(resolve, 1000));
       try {
         const retryBody = new FormData();
@@ -522,11 +531,11 @@ chatForm.addEventListener('submit', async event => {
         selectedFiles.forEach(file => retryBody.append('attachments', file));
         const retryResponse = await api('/api/chat', {method: 'POST', body: retryBody});
         if (retryResponse.attachments?.length) {
-          addMessage(`${retryResponse.attachments.length} reference image(s) uploaded.`, 'tool');
+          addMessage(t('chat.uploaded', {count: retryResponse.attachments.length}), 'tool');
         }
         selectedFiles = [];
         attachments.value = '';
-        attachmentLabel.textContent = 'Attach';
+        attachmentLabel.textContent = t('chat.attach');
       } catch (retryError) {
         setThinking(false);
         addMessage(retryError.message, 'error');
@@ -549,12 +558,13 @@ document.querySelector('#stop').addEventListener('click', () => {
 const finalizeBtn = document.querySelector('#finalize');
 
 function setFinalizing(active) {
+  isFinalizing = active;
   finalizeBtn.disabled = active;
-  finalizeBtn.textContent = active ? 'Finalizing…' : 'Finalize';
+  finalizeBtn.textContent = active ? t('chat.finalizing') : t('chat.finalize');
 }
 
 finalizeBtn.addEventListener('click', async () => {
-  if (!currentProject) return addMessage('Create a project first.', 'error');
+  if (!currentProject) return addMessage(t('chat.createProjectFirst'), 'error');
   setFinalizing(true);
   setThinking(true);
   try {
@@ -569,10 +579,10 @@ finalizeBtn.addEventListener('click', async () => {
 });
 
 document.querySelector('#toggle-wireframe').addEventListener('click', event => {
-  event.currentTarget.textContent = viewer.toggleWireframe() ? 'Solid' : 'Wireframe';
+  event.currentTarget.textContent = viewer.toggleWireframe() ? t('chat.solid') : t('chat.wireframe');
 });
 document.querySelector('#toggle-grid').addEventListener('click', event => {
-  event.currentTarget.textContent = viewer.toggleGrid() ? 'Grid On' : 'Grid Off';
+  event.currentTarget.textContent = viewer.toggleGrid() ? t('chat.gridOn') : t('chat.gridOff');
 });
 document.querySelector('#reset-view').addEventListener('click', () => viewer.fit());
 
@@ -590,11 +600,11 @@ document.querySelector('#reset-view').addEventListener('click', () => viewer.fit
 });
 dropzone.addEventListener('drop', event => {
   selectedFiles = [...event.dataTransfer.files].filter(file => file.type.startsWith('image/'));
-  attachmentLabel.textContent = selectedFiles.length ? `${selectedFiles.length} attached` : 'Attach';
+  attachmentLabel.textContent = selectedFiles.length ? t('chat.attached', {count: selectedFiles.length}) : t('chat.attach');
 });
 attachments.addEventListener('change', () => {
   selectedFiles = [...attachments.files];
-  attachmentLabel.textContent = selectedFiles.length ? `${selectedFiles.length} attached` : 'Attach';
+  attachmentLabel.textContent = selectedFiles.length ? t('chat.attached', {count: selectedFiles.length}) : t('chat.attach');
 });
 
 function addFinalizedCard(data) {
@@ -609,17 +619,17 @@ function addFinalizedCard(data) {
   item.innerHTML = `
     <div class="finalized-header">
       <span class="finalized-check">✓</span>
-      <span class="finalized-title">Finalization Complete</span>
+      <span class="finalized-title">${t('chat.finalizationComplete')}</span>
     </div>
     <div class="finalized-body">
       <img class="finalized-render" src="/api/projects/${encodeURIComponent(currentProject)}/render?v=${Date.now()}"
-           alt="CAD render" loading="lazy"
+           alt="${t('chat.cadRender')}" loading="lazy"
            onerror="this.style.display='none'">
       <div class="finalized-metrics">
-        <div class="metric"><span>Solids</span><strong>${metrics.solid_count ?? '—'}</strong></div>
-        <div class="metric"><span>Volume</span><strong>${metrics.volume_mm3 != null ? `${metrics.volume_mm3} mm³` : '—'}</strong></div>
-        <div class="metric"><span>Dimensions</span><strong>${dimensionText}</strong></div>
-        <div class="metric"><span>Valid</span><strong>${metrics.is_valid ? 'Yes' : 'No'}</strong></div>
+        <div class="metric"><span>${t('chat.solids')}</span><strong>${metrics.solid_count ?? '—'}</strong></div>
+        <div class="metric"><span>${t('chat.volume')}</span><strong>${metrics.volume_mm3 != null ? `${metrics.volume_mm3} mm³` : '—'}</strong></div>
+        <div class="metric"><span>${t('chat.dimensions')}</span><strong>${dimensionText}</strong></div>
+        <div class="metric"><span>${t('chat.valid')}</span><strong>${metrics.is_valid ? t('chat.yes') : t('chat.no')}</strong></div>
       </div>
       <div class="finalized-links">
         <a class="button-link" href="/api/projects/${encodeURIComponent(currentProject)}/output/model.step" download>STEP</a>
@@ -666,7 +676,7 @@ function showQuestion(data) {
 
     const label = document.createElement('label');
     label.textContent = q.question;
-    if (q.required === false) label.textContent += ' (optional)';
+    if (q.required === false) label.textContent += t('chat.optional');
     wrap.append(label);
 
     const inputType = q.input_type || 'text';
@@ -698,10 +708,10 @@ function showQuestion(data) {
       input.type = 'number';
       input.step = 'any';
       input.required = q.required !== false;
-      input.placeholder = 'Numeric value';
+      input.placeholder = t('chat.numericValue');
       row.append(input);
       const unit = document.createElement('select');
-      unit.setAttribute('aria-label', 'Unit');
+      unit.setAttribute('aria-label', t('chat.unit'));
       ['mm', 'in'].forEach(u => unit.add(new Option(u, u)));
       row.append(unit);
       wrap.append(row);
@@ -710,7 +720,7 @@ function showQuestion(data) {
       const input = document.createElement('input');
       input.type = 'text';
       input.required = q.required !== false;
-      input.placeholder = 'Your answer';
+      input.placeholder = t('chat.yourAnswer');
       wrap.append(input);
       fields[q.id] = input;
     }
@@ -719,7 +729,7 @@ function showQuestion(data) {
   });
 
   const btn = document.createElement('button');
-  btn.textContent = 'Reply';
+  btn.textContent = t('chat.reply');
   btn.className = 'question-submit';
   answerForm.append(btn);
 
@@ -803,7 +813,7 @@ onProjectEvent('agent_reasoning_delta', data => {
     panel.className = 'reasoning-panel';
     panel.open = true;
     panel.innerHTML = `
-      <summary><span>Reasoning</span><span class="reasoning-state">Live</span></summary>
+      <summary><span>${t('chat.reasoning')}</span><span class="reasoning-state">${t('chat.live')}</span></summary>
       <div class="reasoning-content"></div>
     `;
     item.querySelector('.message-content').before(panel);
@@ -842,9 +852,9 @@ onProjectEvent('agent_stream_end', data => {
     item.remove();
   } else {
     item.classList.remove('streaming');
-    item.querySelector('.message-state').textContent = 'Complete';
+    item.querySelector('.message-state').textContent = t('chat.complete');
     if (reasoningPanel) {
-      reasoningPanel.querySelector('.reasoning-state').textContent = 'Complete';
+      reasoningPanel.querySelector('.reasoning-state').textContent = t('chat.complete');
     }
     if (item.dataset.raw) lastStreamedAgent = {item, text: item.dataset.raw};
   }
@@ -874,7 +884,7 @@ onProjectEvent('question', data => {
   if (data.questions) {
     const firstQ = data.questions[0] || {};
     const preview = data.questions.length > 1
-      ? `${data.title || 'Questions'} (${data.questions.length} fields)`
+      ? `${data.title || t('chat.questions')} (${t('chat.fields', {count: data.questions.length})})`
       : firstQ.question || '';
     if (preview) addMessage(preview);
   } else if (data.question) {
@@ -900,7 +910,7 @@ onProjectEvent('screenshot_request', data => {
     });
   } catch (error) {
     reply({error: error.message}).catch(() => {});
-    addMessage(`Screenshot failed: ${error.message}`, 'error');
+    addMessage(t('chat.screenshotFailed', {error: error.message}), 'error');
   }
 });
 onProjectEvent('finalized', data => {
@@ -911,11 +921,11 @@ onProjectEvent('finalized', data => {
 });
 onProjectEvent('design_accepted', data => {
   hideDecisionBar();
-  addMessage('Design accepted.', 'user', {});
+  addMessage(t('chat.accepted'), 'user', {});
 });
 onProjectEvent('design_rejected', data => {
   hideDecisionBar();
-  addMessage('Design rejected — revision requires correction.', 'user', {});
+  addMessage(t('chat.designRejected'), 'user', {});
 });
 events.addEventListener('agent_stopped', event => {
   const data = JSON.parse(event.data);
@@ -929,12 +939,12 @@ events.addEventListener('agent_stopped', event => {
 events.addEventListener('open', () => {
   const status = document.querySelector('#connection-status');
   status.className = 'connection-status connected';
-  status.title = 'Connected';
+  status.title = t('chat.connected');
 });
 events.addEventListener('error', () => {
   const status = document.querySelector('#connection-status');
   status.className = 'connection-status disconnected';
-  status.title = 'Disconnected — reconnecting…';
+  status.title = t('chat.disconnected');
 });
 
 async function initProject() {
@@ -975,7 +985,8 @@ function formatRevisionTime(iso) {
   if (!iso) return '';
   try {
     const d = new Date(iso);
-    return d.toLocaleString(undefined, {month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'});
+    const locale = i18n.getLanguage() === 'zh-CN' ? 'zh-CN' : undefined;
+    return d.toLocaleString(locale, {month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'});
   } catch {
     return iso;
   }
@@ -984,14 +995,17 @@ function formatRevisionTime(iso) {
 function formatOrigin(origin) {
   if (!origin) return '';
   const kind = origin.kind || '';
-  const labels = {agent_edit: 'Edit', restore: 'Restore', import: 'Import', recovery: 'Recovery'};
+  const labels = {
+    agent_edit: t('history.origin.edit'), restore: t('history.origin.restore'),
+    import: t('history.origin.import'), recovery: t('history.origin.recovery'),
+  };
   let label = labels[kind] || kind;
   if (origin.operation && kind === 'agent_edit') label += ` (${origin.operation})`;
   return label;
 }
 
 async function loadRevisions(before = '') {
-  if (!before) historyContent.innerHTML = '<div class="history-empty">Loading…</div>';
+  if (!before) historyContent.innerHTML = `<div class="history-empty">${t('history.loading')}</div>`;
   try {
     const query = new URLSearchParams({limit: '50'});
     if (before) query.set('before', before);
@@ -999,11 +1013,8 @@ async function loadRevisions(before = '') {
     if (!data.revisions || !data.revisions.length) {
       if (before) return;
       historyContent.innerHTML = `
-        <div class="history-empty">No revisions yet. Edit model.py to create one.</div>
-        <div class="history-info">
-          The agent may edit only part of model.py; each preview rebuilds the
-          complete script in a fresh sandbox.
-        </div>`;
+        <div class="history-empty">${t('history.noRevisions')}</div>
+        <div class="history-info">${t('history.info')}</div>`;
       loadConstraintPanel();
       return;
     }
@@ -1014,7 +1025,7 @@ async function loadRevisions(before = '') {
       historyContent.replaceChildren();
       const info = document.createElement('div');
       info.className = 'history-info';
-      info.textContent = 'The agent may edit only part of model.py; each preview rebuilds the complete script in a fresh sandbox.';
+      info.textContent = t('history.info');
       historyContent.append(info);
     }
     for (const rev of data.revisions) {
@@ -1023,7 +1034,7 @@ async function loadRevisions(before = '') {
     if (data.next_before) {
       const more = document.createElement('button');
       more.className = 'quiet revision-more';
-      more.textContent = 'Load older revisions';
+      more.textContent = t('history.loadOlder');
       more.addEventListener('click', () => loadRevisions(data.next_before));
       historyContent.append(more);
     }
@@ -1045,9 +1056,9 @@ function createRevisionCard(rev) {
 
   const badges = document.createElement('div');
   badges.className = 'revision-badges';
-  if (rev.is_active) badges.append(makeBadge('active', 'Active'));
-  if (rev.is_last_known_good) badges.append(makeBadge('lkg', 'Last Good'));
-  badges.append(makeBadge(rev.build_status, rev.build_status.replace('_', ' ')));
+  if (rev.is_active) badges.append(makeBadge('active', t('history.active')));
+  if (rev.is_last_known_good) badges.append(makeBadge('lkg', t('history.lastGood')));
+  badges.append(makeBadge(rev.build_status, t(`history.status.${rev.build_status}`)));
   if (rev.acceptance) {
     badges.append(makeBadge(
       `acceptance-${rev.acceptance.decision}`,
@@ -1075,7 +1086,7 @@ function createRevisionCard(rev) {
     const metrics = document.createElement('div');
     metrics.className = 'revision-metrics';
     metrics.textContent = [
-      m.solid_count != null ? `${m.solid_count} solid(s)` : '',
+      m.solid_count != null ? `${m.solid_count} ${t('chat.solids').toLowerCase()}` : '',
       m.volume_mm3 != null ? `${m.volume_mm3} mm³` : '',
       dims.x ? `${dims.x}×${dims.y}×${dims.z} mm` : '',
     ].filter(Boolean).join(' · ');
@@ -1094,7 +1105,7 @@ function createRevisionCard(rev) {
     const issues = document.createElement('div');
     issues.className = 'revision-metrics';
     issues.style.color = '#ffb4a8';
-    issues.textContent = `${rev.open_issues} open issue${rev.open_issues === 1 ? '' : 's'}`;
+    issues.textContent = t('history.openIssues', {count: rev.open_issues, suffix: rev.open_issues === 1 ? '' : 's'});
     card.append(issues);
   }
 
@@ -1114,17 +1125,17 @@ function createRevisionCard(rev) {
 
   const diffBtn = document.createElement('button');
   diffBtn.className = 'quiet';
-  diffBtn.textContent = 'Diff';
+  diffBtn.textContent = t('history.diff');
   diffBtn.addEventListener('click', async () => {
     if (!diffContainer.hidden) {
       diffContainer.hidden = true;
       return;
     }
     diffContainer.hidden = false;
-    diffContainer.textContent = 'Loading diff…';
+    diffContainer.textContent = t('history.loadingDiff');
     try {
       const data = await api(`/api/projects/${encodeURIComponent(currentProject)}/revisions/${rev.id}/diff`);
-      diffContainer.textContent = data.diff || '(no changes)';
+      diffContainer.textContent = data.diff || t('history.noChanges');
       diffContainer.classList.toggle('truncated', data.truncated);
     } catch (error) {
       diffContainer.textContent = error.message;
@@ -1135,14 +1146,14 @@ function createRevisionCard(rev) {
   if (rev.open_issues > 0) {
     const issuesBtn = document.createElement('button');
     issuesBtn.className = 'quiet';
-    issuesBtn.textContent = 'Issues';
+    issuesBtn.textContent = t('history.issues');
     issuesBtn.addEventListener('click', async () => {
       if (!issueDetails.hidden) {
         issueDetails.hidden = true;
         return;
       }
       issueDetails.hidden = false;
-      issueDetails.textContent = 'Loading issues…';
+      issueDetails.textContent = t('history.loadingIssues');
       try {
         const query = new URLSearchParams({open: 'true', revision_id: rev.id});
         const data = await api(`/api/projects/${encodeURIComponent(currentProject)}/quality/issues?${query}`);
@@ -1152,7 +1163,7 @@ function createRevisionCard(rev) {
           row.className = 'revision-metrics';
           const resolveBtn = document.createElement('button');
           resolveBtn.className = 'quiet';
-          resolveBtn.textContent = 'Resolve';
+          resolveBtn.textContent = t('history.resolve');
           resolveBtn.addEventListener('click', async () => {
             resolveBtn.disabled = true;
             try {
@@ -1171,7 +1182,7 @@ function createRevisionCard(rev) {
           row.append(resolveBtn);
           issueDetails.append(row);
         }
-        if (!issueDetails.childElementCount) issueDetails.textContent = 'No open issues.';
+        if (!issueDetails.childElementCount) issueDetails.textContent = t('history.noOpenIssues');
       } catch (error) {
         issueDetails.textContent = error.message;
       }
@@ -1182,9 +1193,9 @@ function createRevisionCard(rev) {
   if (!rev.is_active) {
     const restoreBtn = document.createElement('button');
     restoreBtn.className = 'quiet';
-    restoreBtn.textContent = 'Restore';
+    restoreBtn.textContent = t('history.restore');
     if (rev.build_status === 'failed' || rev.build_status === 'not_run') {
-      restoreBtn.title = 'This revision has no successful build; restore at your own risk.';
+      restoreBtn.title = t('history.restoreRisk');
     }
     restoreBtn.addEventListener('click', () => restoreRevision(rev.id, rev.build_status));
     actions.append(restoreBtn);
@@ -1192,7 +1203,7 @@ function createRevisionCard(rev) {
 
   if (rev.is_last_known_good && !rev.is_active) {
     const lkgBtn = document.createElement('button');
-    lkgBtn.textContent = 'Restore Last Good';
+    lkgBtn.textContent = t('history.restoreLastGood');
     lkgBtn.addEventListener('click', () => restoreRevision(rev.id, 'succeeded'));
     actions.prepend(lkgBtn);
   }
@@ -1214,9 +1225,9 @@ async function loadConstraintPanel() {
   const section = document.createElement('div');
   section.className = 'constraint-section';
   section.innerHTML = `
-    <h3 class="constraint-heading">Protected</h3>
-    <p class="constraint-note">Pins protect named source definitions, not arbitrary mesh faces.</p>
-    <div class="constraint-loading">Loading…</div>`;
+    <h3 class="constraint-heading">${t('history.protected')}</h3>
+    <p class="constraint-note">${t('history.constraintNote')}</p>
+    <div class="constraint-loading">${t('history.loading')}</div>`;
   historyContent.append(section);
 
   try {
@@ -1230,7 +1241,7 @@ async function loadConstraintPanel() {
     if (!constraints.length) {
       const empty = document.createElement('div');
       empty.className = 'constraint-empty';
-      empty.textContent = 'No parameters or features are pinned.';
+      empty.textContent = t('history.noConstraints');
       container.append(empty);
     }
 
@@ -1241,7 +1252,7 @@ async function loadConstraintPanel() {
 
       const badge = document.createElement('span');
       badge.className = `rev-badge ${c.kind === 'parameter' ? 'active' : 'lkg'}`;
-      badge.textContent = c.kind === 'parameter' ? 'param' : 'feature';
+      badge.textContent = c.kind === 'parameter' ? t('history.param') : t('history.feature');
       row.append(badge);
 
       const name = document.createElement('span');
@@ -1251,7 +1262,7 @@ async function loadConstraintPanel() {
 
       const unpin = document.createElement('button');
       unpin.className = 'quiet';
-      unpin.textContent = 'Unpin';
+      unpin.textContent = t('history.unpin');
       unpin.style.fontSize = '.68rem';
       unpin.style.padding = '.2rem .4rem';
       unpin.addEventListener('click', () => unpinConstraint(c.id, c.name));
@@ -1269,14 +1280,14 @@ async function loadConstraintPanel() {
       ...(targets.features || []).filter(target => !target.pinned).map(target => ({
         ...target,
         kind: 'source_feature',
-        detail: `lines ${target.start_line}–${target.end_line}`,
+        detail: t('history.lines', {start: target.start_line, end: target.end_line}),
       })),
     ];
 
     if (available.length) {
       const heading = document.createElement('h4');
       heading.className = 'constraint-subheading';
-      heading.textContent = 'Available to protect';
+      heading.textContent = t('history.availableToProtect');
       container.append(heading);
     }
 
@@ -1286,7 +1297,7 @@ async function loadConstraintPanel() {
 
       const badge = document.createElement('span');
       badge.className = `rev-badge ${target.kind === 'parameter' ? 'active' : 'lkg'}`;
-      badge.textContent = target.kind === 'parameter' ? 'param' : 'feature';
+      badge.textContent = target.kind === 'parameter' ? t('history.param') : t('history.feature');
 
       const label = document.createElement('span');
       label.className = 'constraint-name';
@@ -1295,7 +1306,7 @@ async function loadConstraintPanel() {
 
       const pin = document.createElement('button');
       pin.className = 'quiet';
-      pin.textContent = 'Pin';
+      pin.textContent = t('history.pin');
       pin.addEventListener('click', () => pinConstraint(target.kind, target.name));
 
       row.append(badge, label, pin);
@@ -1305,7 +1316,7 @@ async function loadConstraintPanel() {
     if (!available.length && !constraints.length) {
       const hint = document.createElement('div');
       hint.className = 'constraint-empty';
-      hint.textContent = 'Add typed parameters or named cad-feature regions to model.py to make them protectable.';
+      hint.textContent = t('history.constraintHint');
       container.append(hint);
     }
   } catch (error) {
@@ -1331,12 +1342,12 @@ async function pinConstraint(kind, name) {
     });
     await reloadConstraintPanel();
   } catch (error) {
-    addMessage(`Pin failed: ${error.message}`, 'error');
+    addMessage(t('history.pinFailed', {error: error.message}), 'error');
   }
 }
 
 async function unpinConstraint(id, name) {
-  if (!confirm(`Remove pin from '${name}'? The agent will be able to modify it again.`)) return;
+  if (!confirm(t('history.removePinConfirm', {name}))) return;
   try {
     await api(`/api/projects/${encodeURIComponent(currentProject)}/constraints/${id}`, {
       method: 'DELETE',
@@ -1345,7 +1356,7 @@ async function unpinConstraint(id, name) {
     // Reload the constraint panel.
     await reloadConstraintPanel();
   } catch (error) {
-    addMessage(`Unpin failed: ${error.message}`, 'error');
+    addMessage(t('history.unpinFailed', {error: error.message}), 'error');
   }
 }
 
@@ -1364,9 +1375,9 @@ function setRestoring(active, drawerButtons) {
 
 async function restoreRevision(revisionId, buildStatus) {
   const warning = buildStatus === 'failed' || buildStatus === 'not_run'
-    ? '\n\nThis revision has no successful build. Restore anyway?'
+    ? `\n\n${t('history.restoreWarning')}`
     : '';
-  if (!confirm(`Restore this revision? It will rebuild in the sandbox.${warning}`)) return;
+  if (!confirm(`${t('history.restoreConfirm')}${warning}`)) return;
 
   // Disable conflicting actions during restore.
   const buttons = historyContent.querySelectorAll('button');
@@ -1378,13 +1389,13 @@ async function restoreRevision(revisionId, buildStatus) {
       headers: {'Content-Type': 'application/json'},
     });
     if (result.build_status === 'failed') {
-      addMessage(`Source restored, but CAD rebuild failed. The displayed preview may be from an older model: ${result.error}`, 'error');
+      addMessage(t('history.restoreBuildFailed', {error: result.error}), 'error');
     } else {
-      addMessage(`Restored revision ${result.revision_id.slice(0, 8)} and rebuilt successfully.`, 'tool');
+      addMessage(t('history.restored', {id: result.revision_id.slice(0, 8)}), 'tool');
     }
     closeHistory();
   } catch (error) {
-    addMessage(`Restore failed: ${error.message}`, 'error');
+    addMessage(t('history.restoreFailed', {error: error.message}), 'error');
   } finally {
     setRestoring(false, buttons);
   }
@@ -1408,3 +1419,59 @@ feed.addEventListener('click', event => {
   message.value = btn.dataset.prompt || '';
   message.focus();
 });
+
+function refreshLocalizedApp() {
+  i18n.applyTranslations();
+  const projectTitle = document.querySelector('#project-empty-title');
+  if (projectTitle) projectTitle.textContent = t('chat.project', {name: currentProject});
+  attachmentLabel.textContent = selectedFiles.length
+    ? t('chat.attached', {count: selectedFiles.length})
+    : t('chat.attach');
+  finalizeBtn.textContent = isFinalizing ? t('chat.finalizing') : t('chat.finalize');
+  const wireframeButton = document.querySelector('#toggle-wireframe');
+  const gridButton = document.querySelector('#toggle-grid');
+  if (wireframeButton) wireframeButton.textContent = viewer.wireframe ? t('chat.solid') : t('chat.wireframe');
+  if (gridButton) gridButton.textContent = viewer.gridHelper.visible ? t('chat.gridOn') : t('chat.gridOff');
+  feed.querySelectorAll('.message-agent .message-author, .message.agent .message-author').forEach(node => {
+    node.textContent = t('chat.agent');
+  });
+  feed.querySelectorAll('.message.agent.streaming .message-state').forEach(node => {
+    node.textContent = t('chat.responding');
+  });
+  feed.querySelectorAll('.message.agent:not(.streaming) .message-state').forEach(node => {
+    if (node.textContent) node.textContent = t('chat.complete');
+  });
+  feed.querySelectorAll('.message.tool').forEach(item => {
+    updateToolMessage(item, {status: item.dataset.status || 'preparing'});
+    const labels = item.querySelectorAll('.tool-section > span');
+    if (labels[0]) labels[0].textContent = t('chat.arguments');
+    if (labels[1]) labels[1].textContent = t('chat.result');
+  });
+  feed.querySelectorAll('.reasoning-panel').forEach(panel => {
+    const parts = panel.querySelector('summary')?.children || [];
+    if (parts[0]) parts[0].textContent = t('chat.reasoning');
+    if (parts[1]) parts[1].textContent = panel.closest('.message')?.classList.contains('streaming')
+      ? t('chat.live')
+      : t('chat.complete');
+  });
+  const questionSubmit = questionArea.querySelector('.question-submit');
+  if (questionSubmit) questionSubmit.textContent = t('chat.reply');
+  questionArea.querySelectorAll('input[type="number"]').forEach(input => { input.placeholder = t('chat.numericValue'); });
+  questionArea.querySelectorAll('input[type="text"]').forEach(input => { input.placeholder = t('chat.yourAnswer'); });
+  questionArea.querySelectorAll('select').forEach(select => {
+    if (select.parentElement?.classList.contains('number-row')) select.setAttribute('aria-label', t('chat.unit'));
+  });
+  const metricKeys = ['chat.solids', 'chat.volume', 'chat.dimensions', 'chat.valid'];
+  feed.querySelectorAll('.finalized-card').forEach(card => {
+    card.querySelector('.finalized-title')?.replaceChildren(document.createTextNode(t('chat.finalizationComplete')));
+    card.querySelectorAll('.metric span').forEach((node, index) => {
+      if (metricKeys[index]) node.textContent = t(metricKeys[index]);
+    });
+    const reportLink = [...card.querySelectorAll('.finalized-links a')].find(link => link.href.endsWith('/report'));
+    if (reportLink) reportLink.textContent = t('chat.report');
+  });
+  if (!historyDrawer.hidden) loadRevisions();
+}
+
+window.addEventListener('cad-language-change', refreshLocalizedApp);
+refreshLocalizedApp();
