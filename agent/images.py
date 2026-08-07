@@ -57,6 +57,10 @@ def store_images(files: list[FileStorage], project_dir: Path) -> list[Path]:
     return stored
 
 
-def as_openrouter_image(path: Path) -> dict[str, object]:
+def as_openai_image(path: Path) -> dict[str, object]:
     encoded = base64.b64encode(path.read_bytes()).decode("ascii")
     return {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{encoded}"}}
+
+
+# Backward-compatible helper name used by older integrations.
+as_openrouter_image = as_openai_image

@@ -486,6 +486,24 @@ def test_index_contains_example_prompts(tmp_path: Path, monkeypatch):
     assert b"mounting plate" in response.data
 
 
+def test_frontend_defaults_to_chinese_and_exposes_language_toggle(tmp_path: Path, monkeypatch):
+    settings = Settings(tmp_path / "projects", "https://example.test", "test-model", 1, "127.0.0.1", 5000)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    client = create_app(settings).test_client()
+    client.post("/api/projects/new", json={"name": "demo"})
+
+    projects = client.get("/")
+    design = client.get("/project/demo")
+
+    for response in (projects, design):
+        assert response.status_code == 200
+        assert b'<html lang="zh-CN">' in response.data
+        assert b'id="language-toggle"' in response.data
+        assert b"js/i18n.js" in response.data
+    assert "lang=\"zh-CN\"" in Path("templates/setup.html").read_text(encoding="utf-8")
+    assert "id=\"language-toggle\"" in Path("templates/setup.html").read_text(encoding="utf-8")
+
+
 # ── Local vendor assets ──
 
 def test_local_three_js_import_map_is_used(tmp_path: Path, monkeypatch):

@@ -14,6 +14,8 @@ button.danger { background: #3a1f2a; border-color: #60303d; color: #ffc9d0; }
 .panel-header, .project-actions, .action-bar, .top-nav, .brand, .viewer-actions { display: flex; align-items: center; gap: .6rem; }
 .panel-header { justify-content: space-between; min-height: 42px; }
 .brand { gap: .5rem; min-width: 0; }.brand h1 { margin: 0; font-size: .95rem; letter-spacing: .01em; }
+.language-toggle { flex: 0 0 auto; min-width: 42px; padding: .35rem .55rem; border-color: #40557e; background: #182641; color: #cbd8f2; font-size: .72rem; font-weight: 800; }
+.language-toggle:hover { border-color: #7898f4; background: #213457; color: #f0f4ff; }
 .top-nav { justify-content: flex-end; }.top-nav a, .back-link { color: #aabce5; font-size: .85rem; text-decoration: none; }.top-nav a:hover, .back-link:hover { color: #d4e0ff; }
 .connection-status { width: 8px; height: 8px; border-radius: 50%; background: #64748b; box-shadow: 0 0 0 3px #64748b24; }.connection-status.connected { background: #5ee6a6; box-shadow: 0 0 0 3px #5ee6a624; }.connection-status.disconnected { background: #ff7184; box-shadow: 0 0 0 3px #ff718424; }
 select, input, textarea { color: inherit; background: #111b2b; border: 1px solid #2c3a50; border-radius: 8px; }.project-actions select { min-width: 120px; max-width: 170px; padding: .42rem .5rem; }
@@ -57,6 +59,7 @@ select, input, textarea { color: inherit; background: #111b2b; border: 1px solid
 .projects-page { display: flex; flex-direction: column; min-height: 100dvh; max-width: 960px; margin: 0 auto; padding: 1rem 1.5rem 2rem; }
 
 .projects-header { display: flex; align-items: center; justify-content: space-between; padding: .5rem 0 1.2rem; }
+.projects-header-actions { display: flex; align-items: center; gap: .5rem; }
 .projects-header h1 { margin: 0; font-size: 1.15rem; letter-spacing: .01em; }
 
 button.primary { background: #7898f4; color: #071225; font-weight: 750; }
@@ -150,6 +153,7 @@ button.primary { background: #7898f4; color: #071225; font-weight: 750; }
   background: #111d2f;
   box-shadow: 0 20px 60px #02061740;
 }
+.setup-header { display: flex; align-items: flex-start; justify-content: space-between; gap: .75rem; }
 .setup-card h1 {
   margin: .6rem 0 .4rem;
   font-size: 1.1rem;

@@ -116,6 +116,10 @@ def command(
         "--setenv", "PYTHONDONTWRITEBYTECODE", "1",
         "--setenv", "TMPDIR", "/tmp",
         "--setenv", "LANG", "C.UTF-8",
+        # Keep BLAS thread pools within the sandbox process limit.
+        "--setenv", "OPENBLAS_NUM_THREADS", "1",
+        "--setenv", "OMP_NUM_THREADS", "1",
+        "--setenv", "MKL_NUM_THREADS", "1",
         "--seccomp", str(seccomp_fd),
         "--",
         "/usr/bin/prlimit",

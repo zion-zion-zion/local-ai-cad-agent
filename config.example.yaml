@@ -5,17 +5,19 @@ agent:
   tool_call_limit: 30
   revision_retention_count: 0  # 0 keeps all model revisions
 
-openrouter:
-  base_url: https://openrouter.ai/api/v1
-  model: google/gemini-3.6-flash
+llm:
+  # Any OpenAI-compatible Chat Completions endpoint is supported.
+  base_url: https://api.openai.com/v1
+  api_key_env: OPENAI_API_KEY
+  model: gpt-4o-mini
   timeout_seconds: 60
   app_title: Local AI CAD Agent
   app_url: ""
   session_prefix: local-ai-cad-agent
-  reasoning_effort: "medium"
-  provider: "google-vertex/global"
-  force_provider: true
-  enable_anthropic_cache: true
+  reasoning_effort: null
+  provider: null  # OpenRouter-only provider preference; leave null elsewhere.
+  force_provider: false
+  enable_anthropic_cache: false
 
 server:
   host: 127.0.0.1

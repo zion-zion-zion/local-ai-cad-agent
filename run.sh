@@ -37,9 +37,9 @@ if [ ! -f .env ]; then
     warn ".env is missing. Creating from .env.example…"
     if [ -f .env.example ]; then
         cp .env.example .env
-        info ".env created. Set your OPENROUTER_API_KEY there."
+        info ".env created. Set your OPENAI_API_KEY there."
     else
-        warn ".env.example not found. Create .env with OPENROUTER_API_KEY manually."
+        warn ".env.example not found. Create .env with OPENAI_API_KEY manually."
     fi
 fi
 
@@ -74,8 +74,8 @@ fi
 # ── API key ──
 # Python loads .env via dotenv; this shell only checks that the file exists.
 if [ -f "$PROJECT_DIR/.env" ] \
-    && ! grep -qE '^[[:space:]]*OPENROUTER_API_KEY[[:space:]]*=[[:space:]]*[^[:space:]]' "$PROJECT_DIR/.env" 2>/dev/null; then
-    warn "OPENROUTER_API_KEY is not configured. The setup page will guide you on first launch."
+    && ! grep -qE '^[[:space:]]*(OPENAI_API_KEY|OPENROUTER_API_KEY)[[:space:]]*=[[:space:]]*[^[:space:]]' "$PROJECT_DIR/.env" 2>/dev/null; then
+    warn "No API key is configured. The setup page will guide you on first launch."
 fi
 
 # ── Port check ──

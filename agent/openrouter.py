@@ -1,9 +1,14 @@
-"""Small, testable OpenRouter chat-completions client."""
+"""Small, testable client for OpenAI-compatible chat-completions APIs.
+
+The module keeps the historical name ``openrouter`` as a compatibility import
+for existing integrations. The request path and standard payload are provider
+neutral; OpenRouter extensions are added only when the configured endpoint
+clearly opts into them.
+"""
 from __future__ import annotations
 
 import hashlib
 import json
-import os
 import queue
 import threading
 import time
@@ -13,7 +18,7 @@ from typing import Any
 
 import requests
 
-from agent.settings import Settings
+from agent.settings import Settings, resolve_api_key
 
 
 def sanitize_assistant_message(message: dict[str, Any]) -> dict[str, Any]:
@@ -27,7 +32,7 @@ def sanitize_assistant_message(message: dict[str, Any]) -> dict[str, Any]:
     return sanitized
 
 
-class OpenRouterClient:
+class OpenAICompatibleClient:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
         self.stop_event: threading.Event | None = None
@@ -37,12 +42,7 @@ class OpenRouterClient:
 
     @staticmethod
     def normalize_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        """Return an API-safe copy with exactly one leading system message.
-
-        OpenRouter's cache key benefits from one stable system prefix. Prior
-        messages are immutable references — only assistant messages (which get
-        sanitized downstream) are deep-copied where needed.
-        """
+        """Return an API-safe copy with exactly one leading system message."""
         system_parts: list[str] = []
         non_system: list[dict[str, Any]] = []
         for item in messages:
@@ -88,11 +88,11 @@ class OpenRouterClient:
             try:
                 results.put(
                     requests.post(
-                        f"{self.settings.openrouter_base_url}/chat/completions",
+                        f"{self.settings.base_url}/chat/completions",
                         headers=headers,
                         json=payload,
                         stream=True,
-                        timeout=self.settings.openrouter_timeout_seconds,
+                        timeout=self.settings.timeout_seconds,
                     )
                 )
             except BaseException as error:  # noqa: BLE001 - Propagate worker failures unchanged.
@@ -100,12 +100,12 @@ class OpenRouterClient:
 
         worker = threading.Thread(target=request_worker, daemon=True)
         if self.stop_event and self.stop_event.is_set():
-            raise RuntimeError("OpenRouter request cancelled.")
+            raise RuntimeError("LLM request cancelled.")
         worker.start()
         while worker.is_alive():
             worker.join(timeout=0.1)
             if self.stop_event and self.stop_event.is_set():
-                raise RuntimeError("OpenRouter request cancelled.")
+                raise RuntimeError("LLM request cancelled.")
         result = results.get()
         if isinstance(result, BaseException):
             raise result
@@ -138,7 +138,7 @@ class OpenRouterClient:
         return removed
 
     def _stream_response(self, response: requests.Response) -> dict[str, Any]:
-        """Consume OpenRouter SSE and rebuild a chat-completions response."""
+        """Consume an OpenAI-compatible SSE stream and rebuild the response."""
         content = ""
         role = "assistant"
         tool_calls: dict[int, dict[str, Any]] = {}
@@ -148,7 +148,7 @@ class OpenRouterClient:
         for raw_line in response.iter_lines():
             if self.stop_event and self.stop_event.is_set():
                 response.close()
-                raise RuntimeError("OpenRouter request cancelled.")
+                raise RuntimeError("LLM request cancelled.")
             line = raw_line.decode("utf-8") if isinstance(raw_line, bytes) else raw_line
             if not line or not line.startswith("data:"):
                 continue
@@ -159,14 +159,14 @@ class OpenRouterClient:
             try:
                 chunk = json.loads(payload)
             except json.JSONDecodeError as error:
-                raise RuntimeError("OpenRouter returned malformed streaming JSON.") from error
+                raise RuntimeError("LLM endpoint returned malformed streaming JSON.") from error
             stream_error = chunk.get("error")
             if stream_error:
                 if isinstance(stream_error, dict):
                     detail = stream_error.get("message") or json.dumps(stream_error)
                 else:
                     detail = str(stream_error)
-                raise RuntimeError(f"OpenRouter stream failed: {detail}")
+                raise RuntimeError(f"LLM stream failed: {detail}")
             if isinstance(chunk.get("usage"), dict):
                 self.last_usage = chunk["usage"]
             choices = chunk.get("choices") or []
@@ -175,7 +175,7 @@ class OpenRouterClient:
             choice = choices[0]
             finish_reason = choice.get("finish_reason") or finish_reason
             if finish_reason == "error":
-                raise RuntimeError("OpenRouter stream ended with an error.")
+                raise RuntimeError("LLM stream ended with an error.")
             delta = choice.get("delta") or {}
             role = delta.get("role") or role
             text = delta.get("content")
@@ -194,7 +194,10 @@ class OpenRouterClient:
             if reasoning and self.stream_callback:
                 self.stream_callback({"type": "reasoning", "delta": reasoning})
             for call_delta in delta.get("tool_calls") or []:
-                index = int(call_delta.get("index", 0))
+                try:
+                    index = int(call_delta.get("index", 0))
+                except (TypeError, ValueError):
+                    index = 0
                 call = tool_calls.setdefault(
                     index,
                     {"id": "", "type": "function", "function": {"name": "", "arguments": ""}},
@@ -218,9 +221,9 @@ class OpenRouterClient:
                     )
 
         if not saw_done:
-            raise RuntimeError("OpenRouter stream ended before the completion marker.")
+            raise RuntimeError("LLM stream ended before the completion marker.")
         if not content and not tool_calls:
-            raise RuntimeError("OpenRouter returned an empty completion.")
+            raise RuntimeError("LLM endpoint returned an empty completion.")
         message: dict[str, Any] = {"role": role, "content": content or None}
         if tool_calls:
             message["tool_calls"] = [tool_calls[index] for index in sorted(tool_calls)]
@@ -228,41 +231,49 @@ class OpenRouterClient:
 
     def chat(self, messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None = None) -> dict[str, Any]:
         self.last_usage = None
-        api_key = os.getenv("OPENROUTER_API_KEY")
+        api_key, _ = resolve_api_key(self.settings)
         if not api_key:
-            raise RuntimeError("OPENROUTER_API_KEY is not configured.")
+            raise RuntimeError(f"{self.settings.api_key_env} is not configured.")
         payload: dict[str, Any] = {
-            "model": self.settings.openrouter_model,
+            "model": self.settings.model,
             "messages": self.sanitize_messages(messages),
             "stream": True,
             "stream_options": {"include_usage": True},
         }
         if tools:
             payload["tools"] = tools
-        if self.session_id:
+        if self.session_id and self.settings.is_openrouter:
             payload["session_id"] = hashlib.sha256(self.session_id.encode()).hexdigest()[:64]
         if (
-            self.settings.openrouter_enable_anthropic_cache
-            and self.settings.openrouter_model.startswith("anthropic/")
+            self.settings.is_openrouter
+            and self.settings.enable_anthropic_cache
+            and self.settings.model.startswith("anthropic/")
         ):
             payload["cache_control"] = {"type": "ephemeral"}
-        if self.settings.openrouter_reasoning_effort:
-            payload["reasoning"] = {
-                "effort": self.settings.openrouter_reasoning_effort,
-                "exclude": False,
-            }
-        if self.settings.openrouter_provider:
-            provider: dict[str, Any] = {"order": [self.settings.openrouter_provider]}
-            if self.settings.openrouter_force_provider:
-                provider.update({"only": [self.settings.openrouter_provider], "allow_fallbacks": False, "require_parameters": True})
+        if self.settings.reasoning_effort:
+            if self.settings.is_openrouter:
+                payload["reasoning"] = {
+                    "effort": self.settings.reasoning_effort,
+                    "exclude": False,
+                }
+            else:
+                # ``reasoning_effort`` is the standard OpenAI parameter. It is
+                # opt-in because many compatible servers only implement the
+                # common chat-completions subset.
+                payload["reasoning_effort"] = self.settings.reasoning_effort
+        if self.settings.is_openrouter and self.settings.provider:
+            provider: dict[str, Any] = {"order": [self.settings.provider]}
+            if self.settings.force_provider:
+                provider.update({"only": [self.settings.provider], "allow_fallbacks": False, "require_parameters": True})
             payload["provider"] = provider
         headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
-            "X-OpenRouter-Title": self.settings.openrouter_app_title,
         }
-        if self.settings.openrouter_app_url:
-            headers["HTTP-Referer"] = self.settings.openrouter_app_url
+        if self.settings.is_openrouter:
+            headers["X-OpenRouter-Title"] = self.settings.app_title
+            if self.settings.app_url:
+                headers["HTTP-Referer"] = self.settings.app_url
         image_fallback_used = False
         for attempt in range(3):
             response: requests.Response | None = None
@@ -283,7 +294,7 @@ class OpenRouterClient:
                     except Exception:  # noqa: BLE001,S110 — best-effort diagnostic logging.
                         pass
                     if body_preview:
-                        raise RuntimeError(f"OpenRouter {response.status_code}: {body_preview}")
+                        raise RuntimeError(f"LLM endpoint returned {response.status_code}: {body_preview}")
                 if response.status_code not in {408, 429} and response.status_code < 500:
                     response.raise_for_status()
                     if hasattr(response, "iter_lines"):
@@ -302,7 +313,11 @@ class OpenRouterClient:
             if attempt < 2:
                 delay = self._retry_delay(response, attempt)
                 if self.stop_event and self.stop_event.wait(delay):
-                    raise RuntimeError("OpenRouter request cancelled.")
+                    raise RuntimeError("LLM request cancelled.")
                 if not self.stop_event:
                     time.sleep(delay)
-        raise RuntimeError("OpenRouter retry loop ended unexpectedly.")
+        raise RuntimeError("LLM retry loop ended unexpectedly.")
+
+
+# Backward-compatible import name. New code should use OpenAICompatibleClient.
+OpenRouterClient = OpenAICompatibleClient

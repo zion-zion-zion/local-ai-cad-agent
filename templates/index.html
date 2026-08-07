@@ -1,9 +1,9 @@
 <!doctype html>
-<html lang="en">
+<html lang="zh-CN">
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Local AI CAD Agent</title>
+    <title data-i18n="app.title">本地 AI CAD 助手</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='vendor/highlight/styles/github-dark.min.css') }}">
   </head>
@@ -11,83 +11,85 @@
     <main class="app-shell">
       <section class="chat-panel">
         <header class="panel-header">
-          <div class="brand"><a href="/" class="back-link" title="Back to projects">← Projects</a><h1>{{ project_name }}</h1><span id="connection-status" class="connection-status" title="Connecting…"></span></div>
+          <div class="brand"><a href="/" class="back-link" data-i18n="chat.back" data-i18n-title="chat.back">← 项目</a><h1>{{ project_name }}</h1><span id="connection-status" class="connection-status" data-i18n-title="chat.connecting"></span></div>
+          <button id="language-toggle" type="button" class="language-toggle" aria-label="切换为英文" title="切换为英文">EN</button>
         </header>
         <div id="chat-feed" class="chat-feed" aria-live="polite">
           <div class="empty-state">
-            <strong>Project: {{ project_name }}</strong>
-            <span>Describe the part you want to build.</span>
+            <strong id="project-empty-title">项目：{{ project_name }}</strong>
+            <span data-i18n="chat.emptyText">描述你想要构建的零件。</span>
             <div class="example-prompts">
-              <span class="example-label">Try an example:</span>
-              <button type="button" class="example-prompt" data-prompt="Create a 60 × 30 × 4 mm mounting plate with four M3 holes.">Create a 60 × 30 × 4 mm mounting plate with four M3 holes.</button>
-              <button type="button" class="example-prompt" data-prompt="Create a wheel for a 6 mm D-shaped motor shaft.">Create a wheel for a 6 mm D-shaped motor shaft.</button>
-              <button type="button" class="example-prompt" data-prompt="Create a 40 mm cube with a centered 20 mm circular hole.">Create a 40 mm cube with a centered 20 mm circular hole.</button>
+              <span class="example-label" data-i18n="chat.tryExample">试试这个例子：</span>
+              <button type="button" class="example-prompt" data-prompt-zh="创建一个 60 × 30 × 4 mm 的安装板，并开四个 M3 孔。" data-prompt-en="Create a 60 × 30 × 4 mm mounting plate with four M3 holes.">创建一个 60 × 30 × 4 mm 的安装板，并开四个 M3 孔。</button>
+              <button type="button" class="example-prompt" data-prompt-zh="创建一个适用于 6 mm D 形电机轴的轮子。" data-prompt-en="Create a wheel for a 6 mm D-shaped motor shaft.">创建一个适用于 6 mm D 形电机轴的轮子。</button>
+              <button type="button" class="example-prompt" data-prompt-zh="创建一个中心带 20 mm 圆孔的 40 mm 立方体。" data-prompt-en="Create a 40 mm cube with a centered 20 mm circular hole.">创建一个中心带 20 mm 圆孔的 40 mm 立方体。</button>
             </div>
           </div>
         </div>
         <div id="decision-bar" class="decision-bar" hidden>
-          <span class="decision-label">Review the preview before moving on:</span>
-          <button id="accept-design" type="button" class="primary">Accept design</button>
-          <button id="report-issue" type="button" class="danger">Report issue</button>
-          <button id="continue-editing" type="button" class="quiet">Continue editing</button>
+          <span class="decision-label" data-i18n="chat.decisionLabel">继续之前请检查预览：</span>
+          <button id="accept-design" type="button" class="primary" data-i18n="chat.accept">接受设计</button>
+          <button id="report-issue" type="button" class="danger" data-i18n="chat.reportIssue">报告问题</button>
+          <button id="continue-editing" type="button" class="quiet" data-i18n="chat.continueEditing">继续编辑</button>
         </div>
         <div id="question-area"></div>
         <form id="chat-form" class="composer">
-          <textarea id="message" placeholder="Describe the part you want to create…" rows="2" required></textarea>
+          <textarea id="message" data-i18n-placeholder="chat.inputPlaceholder" placeholder="描述你想创建的零件…" rows="2" required></textarea>
           <div class="action-bar">
-            <label id="dropzone" class="attach-button" for="attachments" title="Add reference images"><span aria-hidden="true">＋</span><span id="attachment-label">Attach</span><input id="attachments" type="file" accept="image/png,image/jpeg,image/webp" multiple hidden></label>
-            <button id="history-btn" type="button" class="quiet">History</button>
-            <button id="finalize" type="button" class="quiet">Finalize</button>
-            <button id="stop" type="button" class="danger" hidden>Stop</button>
-            <button type="submit">Send</button>
+            <label id="dropzone" class="attach-button" for="attachments" data-i18n-title="chat.attachTitle" title="添加参考图片"><span aria-hidden="true">＋</span><span id="attachment-label" data-i18n="chat.attach">添加附件</span><input id="attachments" type="file" accept="image/png,image/jpeg,image/webp" multiple hidden></label>
+            <button id="history-btn" type="button" class="quiet" data-i18n="chat.history">历史记录</button>
+            <button id="finalize" type="button" class="quiet" data-i18n="chat.finalize">完成建模</button>
+            <button id="stop" type="button" class="danger" data-i18n="chat.stop" hidden>停止</button>
+            <button type="submit" data-i18n="chat.send">发送</button>
           </div>
         </form>
       </section>
       <section class="viewer-panel">
-        <header class="viewer-toolbar"><div class="viewer-title"><h2>Preview</h2><span id="dimensions">No preview yet</span></div><div class="viewer-actions"><button id="toggle-wireframe" class="quiet">Wireframe</button><button id="toggle-grid" class="quiet">Grid</button><button id="reset-view" class="quiet">Reset</button></div></header>
-        <div id="viewer" class="viewer"><div id="viewer-empty" class="viewer-empty"><span class="preview-icon">◇</span><strong>No preview yet</strong></div></div>
+        <header class="viewer-toolbar"><div class="viewer-title"><h2 data-i18n="chat.preview">预览</h2><span id="dimensions" data-i18n="chat.noPreview">暂无预览</span></div><div class="viewer-actions"><button id="toggle-wireframe" class="quiet" data-i18n="chat.wireframe">线框</button><button id="toggle-grid" class="quiet" data-i18n="chat.grid">网格</button><button id="reset-view" class="quiet" data-i18n="chat.reset">重置视图</button></div></header>
+        <div id="viewer" class="viewer"><div id="viewer-empty" class="viewer-empty"><span class="preview-icon">◇</span><strong data-i18n="chat.noPreview">暂无预览</strong></div></div>
       </section>
     </main>
     <aside id="history-drawer" class="history-drawer" hidden>
       <header class="drawer-header">
-        <h2>History</h2>
+        <h2 data-i18n="chat.history">历史记录</h2>
         <button id="history-close" type="button" class="quiet">✕</button>
       </header>
       <div id="history-content" class="drawer-content"></div>
     </aside>
     <div id="issue-modal" class="issue-modal" hidden>
       <form id="issue-form" class="issue-form">
-        <h2>Report issue</h2>
-        <label>Category
+        <h2 data-i18n="chat.reportIssue">报告问题</h2>
+        <label><span data-i18n="issue.category">类别</span>
           <select id="issue-category" required>
-            <option value="">Select a category…</option>
-            <option value="missing_or_extra_feature">Missing or extra feature</option>
-            <option value="wrong_size">Wrong size</option>
-            <option value="wrong_position_alignment">Wrong position or alignment</option>
-            <option value="disconnected_or_intersecting">Parts disconnected or intersecting</option>
-            <option value="hole_or_clearance">Hole or clearance problem</option>
-            <option value="printing_problem">Printing problem</option>
-            <option value="intent_mismatch">Does not match request</option>
-            <option value="other">Other</option>
+            <option value="" data-i18n="issue.selectCategory">请选择类别…</option>
+            <option value="missing_or_extra_feature" data-i18n="issue.missingFeature">缺少或多出特征</option>
+            <option value="wrong_size" data-i18n="issue.wrongSize">尺寸错误</option>
+            <option value="wrong_position_alignment" data-i18n="issue.wrongPosition">位置或对齐错误</option>
+            <option value="disconnected_or_intersecting" data-i18n="issue.disconnected">零件断开或相交</option>
+            <option value="hole_or_clearance" data-i18n="issue.hole">孔或间隙问题</option>
+            <option value="printing_problem" data-i18n="issue.printing">打印问题</option>
+            <option value="intent_mismatch" data-i18n="issue.intent">与请求不符</option>
+            <option value="other" data-i18n="issue.other">其他</option>
           </select>
         </label>
-        <label>Severity
+        <label><span data-i18n="issue.severity">严重程度</span>
           <select id="issue-severity">
-            <option value="blocking">Blocking</option>
-            <option value="major">Major</option>
-            <option value="minor">Minor</option>
+            <option value="blocking" data-i18n="issue.blocking">阻塞</option>
+            <option value="major" data-i18n="issue.major">严重</option>
+            <option value="minor" data-i18n="issue.minor">轻微</option>
           </select>
         </label>
-        <label>Description
-          <textarea id="issue-message" rows="3" placeholder="What is wrong with this design?" required></textarea>
+        <label><span data-i18n="issue.description">描述</span>
+          <textarea id="issue-message" data-i18n-placeholder="issue.placeholder" rows="3" placeholder="请描述这个设计有什么问题。" required></textarea>
         </label>
-        <p class="issue-note">A screenshot from the current camera view is attached automatically.</p>
+        <p class="issue-note" data-i18n="issue.note">当前相机视角的截图会自动附加。</p>
         <div class="issue-actions">
-          <button type="button" id="issue-cancel" class="quiet">Cancel</button>
-          <button type="submit" class="danger">Report</button>
+          <button type="button" id="issue-cancel" class="quiet" data-i18n="issue.cancel">取消</button>
+          <button type="submit" class="danger" data-i18n="issue.report">报告</button>
         </div>
       </form>
     </div>
+    <script src="{{ url_for('static', filename='js/i18n.js') }}"></script>
     <script>
       window.APP_CONFIG = {
         projectName: {{ project_name | tojson }},

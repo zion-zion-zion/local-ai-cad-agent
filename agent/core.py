@@ -1,4 +1,4 @@
-"""Background OpenRouter tool-calling loop for one local CAD task at a time."""
+"""Background OpenAI-compatible tool-calling loop for one local CAD task at a time."""
 
 from __future__ import annotations
 
@@ -12,8 +12,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from agent.constraints import ConstraintStore, ModelConstraintValidator
-from agent.images import as_openrouter_image
-from agent.openrouter import OpenRouterClient, sanitize_assistant_message
+from agent.images import as_openai_image
+from agent.openai_client import OpenAICompatibleClient, sanitize_assistant_message
 from agent.prompt import get_system_prompt
 from agent.quality.errors import normalize_error
 from agent.quality.models import Attempt, EnvironmentInfo, ModelInfo
@@ -29,6 +29,9 @@ from agent.tools.file_tool import FileTool
 from agent.tools.question_tool import QuestionTool, normalize_questions
 from agent.tools.question_validator import QuestionValidator
 from agent.tools.terminal_tool import TerminalTool
+
+# Keep this injectable compatibility hook for existing integrations and tests.
+OpenRouterClient = OpenAICompatibleClient
 
 
 class ProjectTools:
@@ -280,9 +283,9 @@ class AgentRunner:
                         get_system_prompt().encode("utf-8")
                     ).hexdigest(),
                     model=ModelInfo(
-                        provider=self.settings.openrouter_provider,
-                        name=self.settings.openrouter_model,
-                        reasoning_effort=self.settings.openrouter_reasoning_effort,
+                        provider=self.settings.provider or self.settings.base_url,
+                        name=self.settings.model,
+                        reasoning_effort=self.settings.reasoning_effort,
                     ),
                     environment=EnvironmentInfo(
                         python_version=platform.python_version(),
@@ -306,7 +309,7 @@ class AgentRunner:
             # Keep one-argument construction compatible with test doubles and older integrations.
             client = OpenRouterClient(self.settings)
             client.stop_event = self._stop_event
-            client.session_id = f"{self.settings.openrouter_session_prefix}:{project}"
+            client.session_id = f"{self.settings.session_prefix}:{project}"
             for _ in range(self.settings.agent_tool_call_limit):
                 if self._stop_event.is_set():
                     run_outcome = "stopped"
@@ -557,7 +560,7 @@ class AgentRunner:
             user_message = {
                 "role": "user",
                 "content": [{"type": "text", "text": message}]
-                + [as_openrouter_image(path) for path in image_paths],
+                + [as_openai_image(path) for path in image_paths],
             }
         if not history or history[-1] != user_message:
             history.append(user_message)
@@ -1112,7 +1115,7 @@ class AgentRunner:
                             "type": "text",
                             "text": f"Screenshot of the 3D preview from the {arguments.get('view', 'current')} view.",
                         },
-                        as_openrouter_image(ss_path),
+                        as_openai_image(ss_path),
                     ],
                 }
                 messages.append(ss_msg)
@@ -1149,9 +1152,9 @@ class AgentRunner:
         lower = detail.lower()
 
         if "401" in detail or "unauthorized" in lower or "invalid api key" in lower:
-            return "Invalid OpenRouter API key. Check your key at https://openrouter.ai/keys."
+            return "Invalid OpenRouter API key or OpenAI-compatible endpoint key. Check the configured key."
         if "429" in detail or "rate limit" in lower:
-            return "OpenRouter rate limit reached. Wait a moment and try again."
+            return "The configured LLM endpoint rate limit was reached. Wait a moment and try again."
         if "model" in lower and (
             "not found" in lower or "invalid" in lower or "not available" in lower
         ):
@@ -1163,10 +1166,8 @@ class AgentRunner:
             or "seccomp" in lower
         ):
             return "CAD sandbox failed. Ensure bubblewrap and libseccomp2 are installed (sudo apt install bubblewrap libseccomp2)."
-        if "openrouter" in lower and (
-            "timeout" in lower or "timed out" in lower or "connection" in lower
-        ):
-            return "Connection to OpenRouter timed out. Check your internet connection."
+        if "timeout" in lower or "timed out" in lower or "connection" in lower:
+            return "Connection to the configured LLM endpoint timed out. Check the endpoint and network connection."
         if "timeout" in lower or "timed out" in lower:
             return "CAD code execution timed out. Try simplifying the design or increasing the timeout."
         if "export" in lower and ("step" in lower or "stl" in lower):
@@ -1353,7 +1354,7 @@ class AgentRunner:
                 "role": "user",
                 "content": [
                     {"type": "text", "text": text},
-                    as_openrouter_image(render_path),
+                    as_openai_image(render_path),
                 ],
             }
         return {"role": "user", "content": text}
