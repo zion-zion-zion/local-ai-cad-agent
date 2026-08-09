@@ -1,0 +1,466 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Local AI CAD Agent 当前数据流与模型上下文说明">
+  <title>Local AI CAD Agent - 当前数据流</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0b111b;
+      --band: #101a28;
+      --band-2: #132235;
+      --line: #2a3c55;
+      --line-soft: #1e2d40;
+      --text: #e8eef7;
+      --muted: #97a7bc;
+      --subtle: #71839b;
+      --cyan: #59d6d0;
+      --blue: #8caeff;
+      --amber: #efbd68;
+      --green: #71d69d;
+      --red: #ff8795;
+      --mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body { margin: 0; min-width: 320px; background: var(--bg); line-height: 1.55; }
+    a { color: var(--cyan); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    code, pre { font-family: var(--mono); }
+    code { color: #b8e8e4; }
+    p { max-width: 78ch; }
+
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      border-bottom: 1px solid var(--line);
+      background: #0b111bf2;
+      backdrop-filter: blur(12px);
+    }
+    .topbar-inner, .layout, .footer-inner { width: min(1440px, calc(100% - 40px)); margin: 0 auto; }
+    .topbar-inner { display: flex; align-items: center; justify-content: space-between; gap: 18px; min-height: 58px; }
+    .brand { display: flex; align-items: baseline; gap: 12px; min-width: 0; }
+    .brand strong { color: var(--cyan); font-size: .78rem; letter-spacing: .12em; text-transform: uppercase; white-space: nowrap; }
+    .brand span { overflow: hidden; color: var(--text); font-size: .95rem; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+    .topbar nav { display: flex; gap: 14px; overflow: auto; white-space: nowrap; }
+    .topbar nav a { color: var(--muted); font-size: .78rem; }
+    .topbar nav a:hover { color: var(--text); }
+
+    .layout { display: grid; grid-template-columns: 230px minmax(0, 1fr); gap: 34px; padding: 34px 0 70px; }
+    .toc { position: sticky; top: 88px; align-self: start; padding: 14px 0; }
+    .toc-label { margin-bottom: 8px; color: var(--subtle); font-size: .68rem; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }
+    .toc a { display: block; padding: 6px 10px; border-left: 2px solid transparent; color: var(--muted); font-size: .78rem; }
+    .toc a:hover { border-left-color: var(--cyan); color: var(--text); text-decoration: none; }
+
+    main { min-width: 0; }
+    .intro { padding: 12px 0 30px; border-bottom: 1px solid var(--line); }
+    .eyebrow { margin: 0 0 8px; color: var(--cyan); font-size: .72rem; font-weight: 800; letter-spacing: .16em; text-transform: uppercase; }
+    h1 { max-width: 850px; margin: 0; color: var(--text); font-size: clamp(2rem, 4vw, 4.2rem); line-height: 1.06; letter-spacing: 0; }
+    .lead { margin: 18px 0 0; color: #b4c1d2; font-size: 1.03rem; }
+    .meta-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 22px; }
+    .meta { padding: 5px 9px; border: 1px solid var(--line); border-radius: 5px; background: var(--band); color: var(--muted); font-size: .73rem; }
+    .meta b { color: var(--text); font-weight: 700; }
+
+    .section { padding: 34px 0; border-bottom: 1px solid var(--line-soft); }
+    .section:last-child { border-bottom: 0; }
+    h2 { margin: 0 0 10px; color: var(--text); font-size: 1.35rem; line-height: 1.2; }
+    h3 { margin: 26px 0 8px; color: #c9d8e9; font-size: .98rem; }
+    .section > p { color: var(--muted); }
+    .note { padding: 11px 13px; border-left: 3px solid var(--amber); background: #1b1b19; color: #d9caa9; }
+    .note strong { color: var(--amber); }
+
+    .flow {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(120px, 1fr));
+      gap: 10px;
+      align-items: stretch;
+      margin: 24px 0 14px;
+    }
+    .flow-node { position: relative; min-height: 112px; padding: 14px; border: 1px solid var(--line); border-top: 3px solid var(--blue); background: var(--band); }
+    .flow-node:nth-child(2) { border-top-color: var(--cyan); }
+    .flow-node:nth-child(3) { border-top-color: var(--amber); }
+    .flow-node:nth-child(4) { border-top-color: var(--green); }
+    .flow-node:nth-child(5) { border-top-color: var(--red); }
+    .flow-node:not(:last-child)::after { position: absolute; top: 43px; right: -17px; z-index: 1; color: var(--cyan); content: "→"; font-size: 1.35rem; }
+    .flow-node strong { display: block; margin-bottom: 5px; color: var(--text); font-size: .83rem; }
+    .flow-node span { display: block; color: var(--muted); font-size: .74rem; }
+    .flow-loop { margin: 0; color: var(--subtle); font-size: .76rem; text-align: center; }
+    .flow-loop b { color: var(--cyan); }
+
+    .timeline { display: grid; gap: 0; margin-top: 20px; }
+    .step { display: grid; grid-template-columns: 42px minmax(0, 1fr); gap: 14px; padding: 0 0 20px; }
+    .step-index { display: grid; width: 32px; height: 32px; place-items: center; border: 1px solid var(--cyan); border-radius: 50%; color: var(--cyan); font-family: var(--mono); font-size: .76rem; }
+    .step-body { padding-bottom: 20px; border-bottom: 1px dashed var(--line); }
+    .step:last-child .step-body { border-bottom: 0; }
+    .step-title { margin: 2px 0 5px; color: var(--text); font-weight: 800; }
+    .step-body p { margin: 0; color: var(--muted); font-size: .9rem; }
+
+    .message-stack { display: grid; gap: 8px; margin: 18px 0; }
+    .message-row { display: grid; grid-template-columns: 76px minmax(0, 1fr); gap: 12px; align-items: start; }
+    .role { padding-top: 8px; color: var(--subtle); font-family: var(--mono); font-size: .72rem; font-weight: 700; text-transform: uppercase; }
+    .role.system { color: var(--blue); }
+    .role.user { color: var(--cyan); }
+    .role.assistant { color: var(--amber); }
+    .role.tool { color: var(--green); }
+    pre { position: relative; overflow: auto; margin: 8px 0 0; padding: 14px 16px; border: 1px solid var(--line); border-radius: 6px; background: #08101a; color: #d7e3f1; font-size: .76rem; line-height: 1.55; white-space: pre-wrap; word-break: break-word; }
+    .copy { float: right; margin: -7px -7px 5px 12px; padding: 4px 8px; border: 1px solid var(--line); border-radius: 4px; background: var(--band-2); color: var(--muted); cursor: pointer; font-size: .7rem; }
+    .copy:hover { border-color: var(--cyan); color: var(--text); }
+
+    .grid-2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin-top: 16px; }
+    .panel { min-width: 0; padding: 16px; border: 1px solid var(--line); background: var(--band); }
+    .panel h3 { margin-top: 0; }
+    .panel p { margin: 0; color: var(--muted); font-size: .86rem; }
+    .panel ul { margin: 10px 0 0; padding-left: 20px; color: var(--muted); font-size: .84rem; }
+    .panel li + li { margin-top: 5px; }
+
+    table { width: 100%; margin-top: 16px; border-collapse: collapse; font-size: .8rem; }
+    th, td { padding: 10px 9px; border-bottom: 1px solid var(--line); vertical-align: top; text-align: left; }
+    th { color: var(--subtle); font-size: .68rem; letter-spacing: .08em; text-transform: uppercase; }
+    td { color: var(--muted); }
+    td:first-child { color: var(--text); font-family: var(--mono); white-space: nowrap; }
+    tr:last-child td { border-bottom: 0; }
+
+    details { border-top: 1px solid var(--line); }
+    details:last-of-type { border-bottom: 1px solid var(--line); }
+    summary { padding: 12px 0; color: #cbd9e9; cursor: pointer; font-weight: 750; }
+    summary::marker { color: var(--cyan); }
+    details > div { padding: 0 0 14px; color: var(--muted); font-size: .86rem; }
+    .source-list { display: grid; gap: 7px; margin-top: 14px; }
+    .source-list a { font-family: var(--mono); font-size: .78rem; }
+    .tag { display: inline-block; padding: 2px 6px; border: 1px solid var(--line); border-radius: 4px; color: var(--subtle); font-family: var(--mono); font-size: .68rem; }
+    .ok { color: var(--green); }
+    .warn { color: var(--amber); }
+    .danger { color: var(--red); }
+
+    footer { border-top: 1px solid var(--line); background: #09101a; }
+    .footer-inner { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 12px; padding: 20px 0; color: var(--subtle); font-size: .74rem; }
+
+    @media (max-width: 1000px) {
+      .layout { grid-template-columns: 1fr; gap: 0; }
+      .toc { position: static; display: flex; flex-wrap: wrap; gap: 4px 12px; padding: 0 0 18px; }
+      .toc-label { width: 100%; }
+      .toc a { padding: 3px 0; border-left: 0; }
+    }
+    @media (max-width: 720px) {
+      .topbar-inner, .layout, .footer-inner { width: min(100% - 24px, 1440px); }
+      .topbar-inner { min-height: 52px; }
+      .topbar nav { display: none; }
+      .flow { grid-template-columns: 1fr; }
+      .flow-node { min-height: 0; }
+      .flow-node:not(:last-child)::after { top: auto; right: auto; bottom: -18px; left: 50%; content: "↓"; }
+      .grid-2 { grid-template-columns: 1fr; }
+      .message-row { grid-template-columns: 1fr; gap: 2px; }
+      .role { padding-top: 8px; }
+      table { display: block; overflow-x: auto; white-space: nowrap; }
+      td { white-space: normal; }
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div class="brand">
+        <strong>Local AI CAD Agent</strong>
+        <span>当前数据流 / Prompt Trace</span>
+      </div>
+      <nav aria-label="页面导航">
+        <a href="#overview">总览</a>
+        <a href="#messages">消息</a>
+        <a href="#loop">循环</a>
+        <a href="#storage">持久化</a>
+        <a href="#sources">源码</a>
+      </nav>
+    </div>
+  </header>
+
+  <div class="layout">
+    <aside class="toc" aria-label="目录">
+      <div class="toc-label">Contents</div>
+      <a href="#overview">当前结论</a>
+      <a href="#request">首次请求</a>
+      <a href="#prompt">系统提示词</a>
+      <a href="#tools">工具 Schema</a>
+      <a href="#loop">Agent 循环</a>
+      <a href="#cad">CAD 验证</a>
+      <a href="#branches">分支流程</a>
+      <a href="#storage">数据保存</a>
+      <a href="#finalize">Finalize</a>
+    </aside>
+
+    <main>
+      <section class="intro" id="overview">
+        <p class="eyebrow">Source-grounded runtime map</p>
+        <h1>一次 Prompt 如何变成可验证的 CAD 模型</h1>
+        <p class="lead">当前实现不是一次性文本生成，而是“完整上下文 + 工具调用 + 本地 CAD 内核反馈 + 视觉复核”的多轮循环。</p>
+        <div class="meta-row">
+          <span class="meta">模型 <b>gpt-5.6-luna</b></span>
+          <span class="meta">推理 <b>high</b></span>
+          <span class="meta">循环上限 <b>120</b></span>
+          <span class="meta">接口 <b>OpenAI-compatible</b></span>
+          <span class="meta">本地模型 <b>未启用</b></span>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="flow" aria-label="数据流图">
+          <div class="flow-node"><strong>1. Browser</strong><span>输入 prompt、上传图片、接收 SSE、加载 STL</span></div>
+          <div class="flow-node"><strong>2. Flask</strong><span>/api/chat 接收并保存输入，后台启动 AgentRunner</span></div>
+          <div class="flow-node"><strong>3. Context</strong><span>系统提示词、历史、约束、图片、工具 schema</span></div>
+          <div class="flow-node"><strong>4. LLM</strong><span>/chat/completions 流式返回文本、推理和 tool call</span></div>
+          <div class="flow-node"><strong>5. Local CAD</strong><span>工具执行、Bubblewrap、build123d、指标和渲染</span></div>
+        </div>
+        <p class="flow-loop">CAD 结果和渲染图会回到 <b>Context</b>，然后进入下一轮 LLM 请求。</p>
+        <div class="note"><strong>关键结论：</strong>每一轮都会重新发送系统提示词和当前完整的有效消息历史；接口没有只发送“本轮增量”的逻辑。</div>
+      </section>
+
+      <section class="section" id="request">
+        <h2>首次请求：模型实际收到什么</h2>
+        <p>浏览器提交的是 multipart FormData，服务器先返回 HTTP 202，再由后台线程调用模型。没有图片时，第一次请求的核心结构如下：</p>
+        <div class="message-stack">
+          <div class="message-row"><div class="role system">system</div><div><pre><button class="copy" data-copy="system-placeholder">复制</button><code id="system-placeholder">&lt;完整系统提示词，约 40,570 字符&gt;
+&lt;identity&gt;You are a pragmatic local CAD assistant using build123d.&lt;/identity&gt;
+...
+&lt;build123d_cli_playbook&gt;...&lt;/build123d_cli_playbook&gt;</code></pre></div></div>
+          <div class="message-row"><div class="role user">user</div><div><pre><button class="copy" data-copy="user-placeholder">复制</button><code id="user-placeholder">创建一个 60 × 30 × 4 mm 的安装板，并开四个 M3 孔。</code></pre></div></div>
+        </div>
+        <p>有图片时，当前 user message 的 <code>content</code> 是 text part 和 <code>image_url</code> part 的数组，图片被编码为 <code>data:image/png;base64,...</code>。模型收到图片内容，不是 <code>inputs/</code> 本地路径。</p>
+        <pre><button class="copy" data-copy="first-request">复制</button><code id="first-request">POST https://api.claudecode.net.cn/api/codex/backend-api/codex/v1/chat/completions
+Authorization: Bearer &lt;API key&gt;
+Content-Type: application/json
+
+{
+  "model": "gpt-5.6-luna",
+  "messages": [
+    {"role": "system", "content": "&lt;完整系统提示词&gt;"},
+    {"role": "user", "content": "用户原始 prompt"}
+  ],
+  "stream": true,
+  "stream_options": {"include_usage": true},
+  "tools": ["11 个 function schema"],
+  "reasoning_effort": "high"
+}</code></pre>
+      </section>
+
+      <section class="section" id="prompt">
+        <h2>系统提示词的组成</h2>
+        <p>系统提示词由静态规则和完整 build123d playbook 拼接而成。代码会根据 playbook 的 mtime 自动刷新缓存。</p>
+        <details open>
+          <summary>静态 Bundle：身份、设计原则和操作规则</summary>
+          <div>
+            <p><span class="tag">identity</span> 你是使用 build123d 的本地 CAD 助手。</p>
+            <p><span class="tag">design_principles</span> 优先材料高效、紧凑和最简单的满足需求的几何；参考图只用于比例，不无故放大结构。</p>
+            <p><span class="tag">operational_rules</span> 只能编辑 <code>model.py</code> 和 <code>summary.md</code>；参数放在顶部；每次模型修改后调用一次 <code>cad_build_and_verify</code>；成功后更新 summary；Final export 由 UI 执行。</p>
+            <p><span class="tag">build123d_rules</span> 使用结构化 CAD 错误修复；验证实体、尺寸和渲染；处理 fillet/chamfer、拓扑索引、RadiusArc、Ellipse、feature marker 和保护约束。</p>
+            <p><span class="tag">constraint_rules</span> 保护 pin 由系统强制执行，模型不能创建、删除或修改 pin。</p>
+            <p><span class="tag">experience_memory</span> 可以搜索和保存已验证的 build123d/CAD 修复经验，不保存完整对话、个人数据、源码或长 traceback。</p>
+          </div>
+        </details>
+        <details>
+          <summary>嵌入的 build123d CLI Playbook</summary>
+          <div>
+            <p>当前 playbook 为 875 行、约 36 KB，包含执行契约、参数化建模、基础 API、拓扑选择、15 个完整示例、常见错误修复、策略指南和 pre-flight checklist。</p>
+            <p>模型因此会看到 <code>result</code> 变量约定、毫米单位、Builder/Algebra 模式、Box/Cylinder/Hole/Sketch/Extrude/Revolve/Sweep/Loft 等具体 API 约束，而不是只依赖训练记忆。</p>
+          </div>
+        </details>
+        <details>
+          <summary>运行时追加的约束消息</summary>
+          <div>
+            <p>如果项目存在用户保护项，系统会在历史之后、当前 prompt 之前加入：</p>
+            <pre><button class="copy" data-copy="constraints">复制</button><code id="constraints">&lt;runtime_active_constraints&gt;
+Protected (do not change):
+- parameter: HOLE_DIAMETER
+- source_feature: base_plate
+&lt;/runtime_active_constraints&gt;</code></pre>
+          </div>
+        </details>
+      </section>
+
+      <section class="section" id="tools">
+        <h2>工具 Schema：模型可以请求什么</h2>
+        <p>工具定义在请求顶层的 <code>tools</code> 字段中，不是 system prompt 的正文。当前模型可见的工具如下：</p>
+        <table>
+          <thead><tr><th>工具</th><th>模型参数</th><th>执行结果</th></tr></thead>
+          <tbody>
+            <tr><td>file_read</td><td>filename: model.py / summary.md</td><td>文件文本</td></tr>
+            <tr><td>file_write</td><td>filename, content</td><td>AST 检查、约束检查、revision、写入结果</td></tr>
+            <tr><td>file_replace</td><td>filename, old, new</td><td>第一处精确替换</td></tr>
+            <tr><td>file_regex_replace</td><td>filename, pattern, replacement, count</td><td>受限正则替换</td></tr>
+            <tr><td>cad_build_and_verify</td><td>无参数</td><td>几何指标、preview.stl、render.png</td></tr>
+            <tr><td>terminal_run</td><td>Python 脚本参数、timeout_seconds</td><td>returncode、stdout、stderr</td></tr>
+            <tr><td>terminal_check</td><td>只读 Python/pytest/pip 检查参数</td><td>检查输出</td></tr>
+            <tr><td>question</td><td>title、questions 数组</td><td>浏览器表单，Agent 暂停</td></tr>
+            <tr><td>experience_search</td><td>query</td><td>最多 5 条历史经验</td></tr>
+            <tr><td>experience_add</td><td>problem、solution、tags</td><td>写入跨项目经验库</td></tr>
+            <tr><td>experience_update</td><td>id、可选更新字段</td><td>更新经验记录</td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section class="section" id="messages">
+        <h2>模型返回和下一轮消息</h2>
+        <p>模型可能返回普通文本，也可能返回 tool call。流式响应中的函数名和 arguments 会被分片，客户端按 tool-call index 拼接后再执行。</p>
+        <pre><button class="copy" data-copy="assistant-tool-call">复制</button><code id="assistant-tool-call">{
+  "role": "assistant",
+  "content": null,
+  "tool_calls": [{
+    "id": "call_abc123",
+    "type": "function",
+    "function": {
+      "name": "file_write",
+      "arguments": "{\"filename\":\"model.py\",\"content\":\"...\"}"
+    }
+  }]
+}</code></pre>
+        <p>执行成功后，下一轮会把 assistant tool call 和对应的 tool message 一起发回模型：</p>
+        <pre><button class="copy" data-copy="tool-result">复制</button><code id="tool-result">{
+  "role": "tool",
+  "tool_call_id": "call_abc123",
+  "content": "{\"ok\":true,\"tool\":\"file_write\",\"data\":\"Wrote model.py ...\"}"
+}</code></pre>
+        <div class="grid-2">
+          <div class="panel"><h3>模型会收到</h3><ul><li>完整 system prompt</li><li>当前及最近历史 user/assistant/tool 消息</li><li>工具执行结果</li><li>当前请求中的图片</li><li>成功 CAD 后的 render.png</li><li>运行时保护约束</li></ul></div>
+          <div class="panel"><h3>模型不会自动收到</h3><ul><li>API key</li><li>conversation.jsonl 原始文件</li><li>浏览器界面状态</li><li>STL 二进制内容</li><li>quality 目录完整记录</li><li>Finalize 报告生成过程</li></ul></div>
+        </div>
+      </section>
+
+      <section class="section" id="loop">
+        <h2>Agent 循环：按时间顺序</h2>
+        <div class="timeline">
+          <div class="step"><div class="step-index">01</div><div class="step-body"><div class="step-title">初始化 ProjectTools</div><p>加载 revision、约束、文件、终端、CAD、提问和经验工具；恢复或校准已有 model.py。</p></div></div>
+          <div class="step"><div class="step-index">02</div><div class="step-body"><div class="step-title">建立 messages</div><p>读取 api_messages.jsonl，最多保留 100 条；加上系统提示词、运行时约束和本次 user prompt。</p></div></div>
+          <div class="step"><div class="step-index">03</div><div class="step-body"><div class="step-title">调用 LLM</div><p>POST /chat/completions，stream=true；SSE 中的文本、reasoning 和 tool call 实时推送到浏览器。</p></div></div>
+          <div class="step"><div class="step-index">04</div><div class="step-body"><div class="step-title">执行 tool calls</div><p>解析 JSON arguments，逐个执行；每个调用都生成 tool_status，并把统一 JSON envelope 加入 messages。</p></div></div>
+          <div class="step"><div class="step-index">05</div><div class="step-body"><div class="step-title">成功 CAD 后视觉复核</div><p>把指标和 render.png 作为新的 user message 追加，要求模型检查缺失、错位和不合理几何。</p></div></div>
+          <div class="step"><div class="step-index">06</div><div class="step-body"><div class="step-title">判断是否继续</div><p>有错误就修复；model.py 修改后重新 build；没有新预览时系统会提示一次必须调用 cad_build_and_verify。</p></div></div>
+          <div class="step"><div class="step-index">07</div><div class="step-body"><div class="step-title">浏览器确认预览</div><p>成功构建后浏览器加载 STL，POST preview/displayed；确认后才发布最终 assistant message。</p></div></div>
+        </div>
+        <p class="note"><strong>循环上限：</strong>当前配置为 120 次 Agent 循环。一次模型响应可以包含多个 tool call，因此 120 次循环不等于 120 个工具调用。</p>
+      </section>
+
+      <section class="section" id="cad">
+        <h2>cad_build_and_verify 内部做什么</h2>
+        <div class="grid-2">
+          <div class="panel"><h3>执行</h3><ul><li>读取 model.py</li><li>再次做 AST pre-flight</li><li>复制到临时目录</li><li>通过 Bubblewrap 沙箱运行 runner.py</li><li>网络和危险系统调用受限</li><li>超时为 120 秒</li></ul></div>
+          <div class="panel"><h3>验证</h3><ul><li>读取顶层 result</li><li>计算 solids、volume、bounding box</li><li>检查 is_valid、有限数值和正尺寸</li><li>导出 preview.stl</li><li>tessellate 后生成 512 × 512 render.png</li><li>记录当前 revision 的 build 状态</li></ul></div>
+        </div>
+        <pre><button class="copy" data-copy="cad-result">复制</button><code id="cad-result">{
+  "ok": true,
+  "tool": "cad_build_and_verify",
+  "data": {
+    "metrics": {
+      "solid_count": 1,
+      "is_valid": true,
+      "volume_mm3": 6800.0,
+      "dimensions_mm": {"x": 60.0, "y": 30.0, "z": 4.0}
+    },
+    "preview": "preview.stl",
+    "render": "render.png"
+  }
+}</code></pre>
+      </section>
+
+      <section class="section" id="branches">
+        <h2>不同分支</h2>
+        <details open>
+          <summary class="ok">CAD 成功</summary>
+          <div>保存 preview.stl 和 render.png，发布 preview_updated；追加视觉审查消息；模型可以继续修复或结束；浏览器加载预览后，Agent 才发布完成消息。</div>
+        </details>
+        <details>
+          <summary class="danger">CAD 失败</summary>
+          <div>返回带 code、phase、message、retryable、hint 的错误 envelope；模型读取错误并修改 model.py。若最终没有产生新预览，系统发布 agent_error，不会伪装成完成。</div>
+        </details>
+        <details>
+          <summary class="warn">模型调用 question</summary>
+          <div>问题通过 SSE 显示在浏览器，写入 .agent_state.json，Agent 暂停。用户回答经过输入类型校验后，被格式化成新的 user message，重新启动 Agent。</div>
+        </details>
+        <details>
+          <summary>模型没有调用任何工具</summary>
+          <div>如果这是纯聊天，会直接完成；如果之前已经使用过工具但没有生成新 CAD 预览，系统会先追加“model.py exists but it has not been verified. Call cad_build_and_verify now.”，再给模型一次机会。</div>
+        </details>
+        <details>
+          <summary>用户点击 Stop</summary>
+          <div>设置 stop event，终止模型请求、终端进程或 CAD 进程，清理等待问题和 pending preview，并通过 SSE 通知浏览器。</div>
+        </details>
+      </section>
+
+      <section class="section" id="storage">
+        <h2>本地数据保存位置</h2>
+        <table>
+          <thead><tr><th>路径</th><th>内容</th><th>是否自动发给模型</th></tr></thead>
+          <tbody>
+            <tr><td>inputs/*.png</td><td>归一化后的用户参考图</td><td>当前带图请求会以 base64 发出</td></tr>
+            <tr><td>model.py</td><td>当前 CAD 源码</td><td>只有模型调用 file_read 时返回</td></tr>
+            <tr><td>summary.md</td><td>设计摘要</td><td>只有模型调用 file_read 时返回</td></tr>
+            <tr><td>api_messages.jsonl</td><td>协议级 user/assistant/tool 历史</td><td>下一轮重建为 messages</td></tr>
+            <tr><td>conversation.jsonl</td><td>UI 历史、工具状态、usage、最终消息</td><td>不会直接发送</td></tr>
+            <tr><td>.cad_metrics.json</td><td>最近一次构建指标和 model SHA</td><td>通过 CAD tool result 间接返回</td></tr>
+            <tr><td>.cad-agent/</td><td>revision、constraints、quality 记录</td><td>约束摘要会发送，其余不会</td></tr>
+            <tr><td>output/</td><td>最终 STEP、STL、report.md</td><td>Finalize 不调用模型</td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section class="section" id="finalize">
+        <h2>Finalize：最终导出</h2>
+        <p>Finalize 是独立的本地处理流程，不是又一轮 LLM prompt。它重新执行当前 model.py，生成最终渲染和 STEP/STL，然后根据 summary.md 与 conversation.jsonl 生成 report.md，并保存当前源码 SHA 以识别过期导出。</p>
+        <div class="flow" aria-label="Finalize 流程">
+          <div class="flow-node"><strong>当前 model.py</strong><span>重新执行</span></div>
+          <div class="flow-node"><strong>CAD metrics</strong><span>重新验证</span></div>
+          <div class="flow-node"><strong>STEP / STL</strong><span>导出到 output</span></div>
+          <div class="flow-node"><strong>Journey</strong><span>统计工具和 token</span></div>
+          <div class="flow-node"><strong>report.md</strong><span>原子替换输出目录</span></div>
+        </div>
+      </section>
+
+      <section class="section" id="sources">
+        <h2>对应源码</h2>
+        <div class="source-list">
+          <a href="agent/core.py#L250">agent/core.py - AgentRunner 主循环</a>
+          <a href="agent/core.py#L553">agent/core.py - messages 和历史构造</a>
+          <a href="agent/openrouter.py#L232">agent/openrouter.py - Chat Completions 请求与 SSE</a>
+          <a href="agent/prompt.py#L91">agent/prompt.py - 系统提示词</a>
+          <a href="agent/tool_schemas.py#L31">agent/tool_schemas.py - 当前工具 schema</a>
+          <a href="agent/tools/cad_tool.py#L70">agent/tools/cad_tool.py - CAD 沙箱执行</a>
+          <a href="app.py#L668">app.py - /api/chat</a>
+          <a href="app.py#L1766">app.py - SSE /api/stream</a>
+          <a href="static/js/app.js#L792">static/js/app.js - SSE 前端处理</a>
+          <a href="agent/finalize.py#L239">agent/finalize.py - Finalize</a>
+        </div>
+        <p class="note" style="margin-top: 18px"><strong>说明：</strong>本页面是基于当前工作区源码生成的静态说明。实际运行时仍以源码、<code>config.yaml</code> 和项目自身的历史文件为准。</p>
+      </section>
+    </main>
+  </div>
+
+  <footer>
+    <div class="footer-inner">
+      <span>Local AI CAD Agent / Prompt Trace</span>
+      <span>Standalone HTML · no external dependencies</span>
+    </div>
+  </footer>
+
+  <script>
+    document.querySelectorAll('[data-copy]').forEach(button => {
+      button.addEventListener('click', async () => {
+        const target = document.getElementById(button.dataset.copy);
+        if (!target) return;
+        try {
+          await navigator.clipboard.writeText(target.textContent);
+          const old = button.textContent;
+          button.textContent = '已复制';
+          setTimeout(() => { button.textContent = old; }, 1200);
+        } catch {
+          button.textContent = '复制失败';
+          setTimeout(() => { button.textContent = '复制'; }, 1200);
+        }
+      });
+    });
+  </script>
+</body>
+</html>

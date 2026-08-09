@@ -85,3 +85,7 @@ output/
 *.brep
 *.iges
 *.igs
+
+# Text-to-CAD benchmark data and generated runs
+benchmarks/.data/
+benchmarks/runs/
