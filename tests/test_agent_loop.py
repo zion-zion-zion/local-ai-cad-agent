@@ -176,6 +176,20 @@ class LiveFinalClient:
         }
 
 
+class StopAfterResponseClient:
+    def __init__(self, _settings):
+        self.stop_event = None
+
+    def chat(self, _messages, _tools):
+        assert self.stop_event is not None
+        self.stop_event.set()
+        return {
+            "choices": [
+                {"message": {"role": "assistant", "content": "Late response."}}
+            ]
+        }
+
+
 def test_agent_does_not_complete_without_a_new_drawing(tmp_path: Path, monkeypatch):
     import agent.core
 
@@ -580,6 +594,30 @@ def test_content_delta_is_published_before_stream_end(tmp_path: Path, monkeypatc
     event_types = [kind for kind, _data in events]
     assert event_types.index("agent_content_delta") < event_types.index(
         "agent_stream_end"
+    )
+
+
+def test_stop_after_a_model_response_does_not_complete_the_run(
+    tmp_path: Path, monkeypatch
+):
+    import agent.core
+
+    project = tmp_path / "demo"
+    project.mkdir()
+    (project / "conversation.jsonl").write_text("", encoding="utf-8")
+    events = []
+    monkeypatch.setattr(agent.core, "OpenRouterClient", StopAfterResponseClient)
+    runner = AgentRunner(
+        Settings(tmp_path, "https://example.test", "test", 1, "127.0.0.1", 5000),
+        lambda kind, data: events.append((kind, data)),
+    )
+
+    runner._run("demo", "Hello")
+
+    assert not any(kind == "agent_message" for kind, _data in events)
+    assert any(
+        kind == "agent_status" and data["status"] == "stopped"
+        for kind, data in events
     )
 
 

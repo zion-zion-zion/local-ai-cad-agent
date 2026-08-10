@@ -1,6 +1,7 @@
 import json
 import os
 import re
+import threading
 import time
 from io import BytesIO
 from pathlib import Path
@@ -330,6 +331,64 @@ def test_stop_clears_persisted_waiting_question(tmp_path: Path):
     assert client.post("/api/stop", json={"project": "demo"}).status_code == 200
     assert app.config["AGENT_RUNNER"].waiting_question("demo") is None
     assert not (project / ".agent_state.json").exists()
+
+
+def test_stop_stops_an_active_run_and_preserves_the_latest_successful_revision(
+    tmp_path: Path, monkeypatch
+):
+    import agent.core
+
+    class BlockingClient:
+        entered = threading.Event()
+
+        def __init__(self, _settings):
+            self.stop_event = None
+
+        def chat(self, _messages, _tools):
+            self.entered.set()
+            assert self.stop_event is not None
+            self.stop_event.wait(timeout=2)
+            raise RuntimeError("LLM request cancelled.")
+
+    settings = Settings(
+        tmp_path / "projects",
+        "https://example.test",
+        "test-model",
+        1,
+        "127.0.0.1",
+        5000,
+    )
+    app = create_app(settings)
+    client = app.test_client()
+    client.post("/api/projects/new", json={"name": "demo"})
+    project = settings.workspace_root / "demo"
+    store = RevisionStore(project)
+    revision = store.commit("result = 1\n", RevisionOrigin(kind="agent_edit"))
+    (project / "preview.stl").write_bytes(b"solid demo\nendsolid demo\n")
+    store.record_build_success(revision.id, {"solid_count": 1}, project / "preview.stl")
+    model_before = (project / "model.py").read_text(encoding="utf-8")
+    monkeypatch.setattr(agent.core, "OpenRouterClient", BlockingClient)
+
+    runner = app.config["AGENT_RUNNER"]
+    assert runner.start("demo", "make a bracket")
+    assert BlockingClient.entered.wait(timeout=1)
+
+    response = client.post("/api/stop", json={"project": "demo"})
+
+    assert response.status_code == 200
+    assert response.get_json() == {"stopped": True, "affected_projects": ["demo"]}
+    deadline = time.monotonic() + 2
+    while runner.is_running() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert not runner.is_running()
+    assert RevisionStore(project).head().id == revision.id
+    assert (project / "model.py").read_text(encoding="utf-8") == model_before
+    history = client.get("/api/projects/demo/history").get_json()["events"]
+    assert any(
+        event["type"] == "agent_stopped"
+        and event["data"]["project"] == "demo"
+        for event in history
+    )
 
 
 def test_project_state_recovers_persisted_question(tmp_path: Path):

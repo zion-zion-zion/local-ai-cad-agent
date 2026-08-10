@@ -1,5 +1,10 @@
 import { CadViewer } from './viewer.js';
 import { createClientId } from './client-id.mjs';
+import {
+  createRunState,
+  runStateControls,
+  transitionRun,
+} from './run-state.mjs';
 
 const i18n = window.CAD_I18N;
 const t = (key, values) => i18n.t(key, values);
@@ -18,6 +23,7 @@ const currentProject = window.APP_CONFIG?.projectName || '';
 
 let selectedFiles = [];
 let lastStreamedAgent = null;
+let runState = createRunState();
 let previewProject = '';
 let loadedPreviewRevision = '';
 let previewLoadPromise = null;
@@ -195,7 +201,6 @@ function addToolMessage(data = {}) {
 }
 
 function setThinking(visible) {
-  stopButton.hidden = !visible;
   feed.querySelector('.thinking-indicator')?.remove();
   if (!visible) return;
   const indicator = document.createElement('div');
@@ -205,6 +210,43 @@ function setThinking(visible) {
   feed.querySelector('.empty-state')?.remove();
   feed.append(indicator);
   feed.scrollTop = feed.scrollHeight;
+}
+
+function updateRunState(event) {
+  runState = transitionRun(runState, event);
+  const controls = runStateControls(runState);
+  stopButton.hidden = !controls.stopVisible;
+  stopButton.disabled = controls.stopDisabled;
+  stopButton.textContent = controls.stopping ? t('chat.stopping') : t('chat.stop');
+  stopButton.setAttribute('aria-busy', controls.stopping ? 'true' : 'false');
+  chatForm.querySelector('button[type="submit"]').disabled = controls.submissionDisabled;
+  message.disabled = controls.submissionDisabled;
+  attachments.disabled = controls.submissionDisabled;
+}
+
+function markAgentStopped(item) {
+  if (!item) return;
+  item.classList.remove('streaming');
+  item.classList.add('stopped');
+  const state = item.querySelector('.message-state');
+  if (state) state.textContent = t('chat.stopped');
+  const reasoningState = item.querySelector('.reasoning-state');
+  if (reasoningState) reasoningState.textContent = t('chat.stopped');
+}
+
+function markActiveAgentsStopped() {
+  const items = new Set(agentStreams.values());
+  if (lastStreamedAgent?.item?.isConnected) items.add(lastStreamedAgent.item);
+  items.forEach(markAgentStopped);
+  agentStreams.clear();
+  streamedTools.clear();
+  lastStreamedAgent = null;
+}
+
+function finishRun(status) {
+  markActiveAgentsStopped();
+  setThinking(false);
+  updateRunState({type: `terminal_${status}`});
 }
 
 async function api(path, options) {
@@ -397,6 +439,8 @@ async function loadCurrentState() {
   if (!currentProject) return;
   const data = await api(`/api/projects/${encodeURIComponent(currentProject)}/state`);
   if (data.status === 'waiting_for_user') {
+    updateRunState({type: 'run_started'});
+    setThinking(false);
     const q = data.question || {};
     if (q.questions) {
       const firstQ = q.questions[0] || {};
@@ -409,8 +453,10 @@ async function loadCurrentState() {
     }
     showQuestion({project: currentProject, ...q});
   } else if (data.status === 'running') {
+    updateRunState({type: 'run_started'});
     setThinking(true);
   } else if (data.status === 'rendering' && data.preview_id) {
+    updateRunState({type: 'run_started'});
     setThinking(true);
     await loadCurrentPreview(data.preview_id);
   }
@@ -488,11 +534,11 @@ message.addEventListener('keydown', (e) => {
 chatForm.addEventListener('submit', async event => {
   event.preventDefault();
   if (!currentProject) return addMessage(t('chat.createProjectFirst'), 'error');
+  if (runStateControls(runState).active) return;
   const text = message.value.trim();
   if (!text) return;
-  const btn = chatForm.querySelector('button[type="submit"]');
-  btn.disabled = true;
-  message.disabled = true;
+  let submissionAccepted = false;
+  updateRunState({type: 'run_started'});
   try {
     addMessage(text, 'user');
     setThinking(true);
@@ -504,6 +550,7 @@ chatForm.addEventListener('submit', async event => {
     body.append('idempotency_key', idempotencyKey);
     selectedFiles.forEach(file => body.append('attachments', file));
     const response = await api('/api/chat', {method: 'POST', body});
+    submissionAccepted = response.accepted === true || response.duplicate === true;
     if (response.duplicate) {
       // Retry hit a submission that is already in-flight — the SSE stream
       // is active; clear thinking state so the user sees streaming progress.
@@ -531,6 +578,7 @@ chatForm.addEventListener('submit', async event => {
         retryBody.append('idempotency_key', idempotencyKey);
         selectedFiles.forEach(file => retryBody.append('attachments', file));
         const retryResponse = await api('/api/chat', {method: 'POST', body: retryBody});
+        submissionAccepted = retryResponse.accepted === true || retryResponse.duplicate === true;
         if (retryResponse.attachments?.length) {
           addMessage(t('chat.uploaded', {count: retryResponse.attachments.length}), 'tool');
         }
@@ -543,17 +591,37 @@ chatForm.addEventListener('submit', async event => {
       }
     }
   } finally {
-    btn.disabled = false;
-    message.disabled = false;
+    if (!submissionAccepted) {
+      try {
+        const state = await api(`/api/projects/${encodeURIComponent(currentProject)}/state`);
+        if (['running', 'waiting_for_user', 'rendering'].includes(state.status)) {
+          updateRunState({type: 'run_started'});
+          setThinking(state.status !== 'waiting_for_user');
+        } else {
+          // No server Run was accepted, so release the provisional submission state.
+          finishRun('error');
+        }
+      } catch {
+        finishRun('error');
+      }
+    }
   }
 });
 
-document.querySelector('#stop').addEventListener('click', () => {
-  api('/api/stop', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({project: currentProject}),
-  }).catch(error => addMessage(error.message, 'error'));
+document.querySelector('#stop').addEventListener('click', async () => {
+  const controls = runStateControls(runState);
+  if (!controls.active || controls.stopping) return;
+  updateRunState({type: 'stop_requested'});
+  setThinking(false);
+  try {
+    await api('/api/stop', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({project: currentProject}),
+    });
+  } catch (error) {
+    addMessage(error.message, 'error');
+  }
 });
 
 const finalizeBtn = document.querySelector('#finalize');
@@ -791,12 +859,17 @@ events.addEventListener('stream_reset', () => {
   initProject().catch(error => addMessage(error.message, 'error'));
 });
 onProjectEvent('agent_stream_start', data => {
+  if (runStateControls(runState).terminal) return;
+  updateRunState({type: 'stream_started'});
   setThinking(false);
   lastStreamedAgent = null;
   addMessage('', 'agent', {messageId: data.message_id, streaming: true});
 });
 onProjectEvent('agent_content_delta', data => {
+  if (runStateControls(runState).terminal) return;
   let item = agentStreams.get(data.message_id);
+  if (runStateControls(runState).stopping && !item) return;
+  updateRunState({type: 'stream_activity'});
   if (!item) {
     item = addMessage('', 'agent', {messageId: data.message_id, streaming: true});
   }
@@ -804,7 +877,10 @@ onProjectEvent('agent_content_delta', data => {
   feed.scrollTop = feed.scrollHeight;
 });
 onProjectEvent('agent_reasoning_delta', data => {
+  if (runStateControls(runState).terminal) return;
   let item = agentStreams.get(data.message_id);
+  if (runStateControls(runState).stopping && !item) return;
+  updateRunState({type: 'stream_activity'});
   if (!item) {
     item = addMessage('', 'agent', {messageId: data.message_id, streaming: true});
   }
@@ -825,6 +901,9 @@ onProjectEvent('agent_reasoning_delta', data => {
   feed.scrollTop = feed.scrollHeight;
 });
 onProjectEvent('agent_tool_call_delta', data => {
+  if (runStateControls(runState).terminal) return;
+  if (runStateControls(runState).stopping) return;
+  updateRunState({type: 'stream_activity'});
   const key = `${data.message_id}:${data.index}`;
   let state = streamedTools.get(key);
   if (!state) {
@@ -845,8 +924,14 @@ onProjectEvent('agent_tool_call_delta', data => {
   feed.scrollTop = feed.scrollHeight;
 });
 onProjectEvent('agent_stream_end', data => {
+  if (runStateControls(runState).terminal) return;
   const item = agentStreams.get(data.message_id);
   if (!item) return;
+  if (runStateControls(runState).stopping) {
+    markAgentStopped(item);
+    agentStreams.delete(data.message_id);
+    return;
+  }
   if (data.message && !item.dataset.raw) renderAgentContent(item, data.message);
   const reasoningPanel = item.querySelector('.reasoning-panel');
   if (!item.dataset.raw && !reasoningPanel) {
@@ -862,16 +947,34 @@ onProjectEvent('agent_stream_end', data => {
   agentStreams.delete(data.message_id);
 });
 onProjectEvent('agent_message', data => {
+  if (runStateControls(runState).terminal) return;
+  if (runStateControls(runState).stopping) {
+    finishRun('stopped');
+    return;
+  }
   setThinking(false);
+  updateRunState({type: 'terminal_completed'});
   if (lastStreamedAgent?.item.isConnected && lastStreamedAgent.text === data.message) return;
   addMessage(data.message);
 });
 onProjectEvent('agent_error', data => {
+  if (runStateControls(runState).terminal) return;
+  const stopped = runStateControls(runState).stopping;
+  if (stopped) {
+    finishRun('stopped');
+    return;
+  }
   setThinking(false);
   setFinalizing(false);
   addMessage(data.message, 'error');
+  updateRunState({type: 'terminal_error'});
 });
 onProjectEvent('agent_status', data => {
+  if (data.status !== 'stopped' && runStateControls(runState).terminal) return;
+  if (['started', 'waiting_for_user', 'rendering'].includes(data.status)) {
+    updateRunState({type: 'run_activity'});
+  }
+  if (data.status === 'stopped') finishRun('stopped');
   if (showInfoMessages) addInfoMessage('agent_status', data);
 });
 onProjectEvent('tool_status', data => {
@@ -881,6 +984,8 @@ onProjectEvent('agent_usage', data => {
   if (showInfoMessages) addInfoMessage('agent_usage', data);
 });
 onProjectEvent('question', data => {
+  if (runStateControls(runState).terminal) return;
+  updateRunState({type: 'run_activity'});
   setThinking(false);
   if (data.questions) {
     const firstQ = data.questions[0] || {};
@@ -894,6 +999,8 @@ onProjectEvent('question', data => {
   showQuestion(data);
 });
 onProjectEvent('preview_updated', data => {
+  if (runStateControls(runState).terminal) return;
+  updateRunState({type: 'run_activity'});
   loadCurrentPreview(data.preview_id).catch(error => addMessage(error.message, 'error'));
 });
 onProjectEvent('screenshot_request', data => {
@@ -930,8 +1037,9 @@ onProjectEvent('design_rejected', data => {
 });
 events.addEventListener('agent_stopped', event => {
   const data = JSON.parse(event.data);
-  if (data.project === currentProject) {
-    setThinking(false);
+  const affected = data.affected_projects || [];
+  if (data.project === currentProject || affected.includes(currentProject)) {
+    finishRun('stopped');
     questionArea.replaceChildren();
     if (showInfoMessages) addInfoMessage('agent_stopped', data);
   }
@@ -1439,9 +1547,16 @@ function refreshLocalizedApp() {
   feed.querySelectorAll('.message.agent.streaming .message-state').forEach(node => {
     node.textContent = t('chat.responding');
   });
-  feed.querySelectorAll('.message.agent:not(.streaming) .message-state').forEach(node => {
+  feed.querySelectorAll('.message.agent.stopped .message-state').forEach(node => {
+    node.textContent = t('chat.stopped');
+  });
+  feed.querySelectorAll('.message.agent.stopped .reasoning-state').forEach(node => {
+    node.textContent = t('chat.stopped');
+  });
+  feed.querySelectorAll('.message.agent:not(.streaming):not(.stopped) .message-state').forEach(node => {
     if (node.textContent) node.textContent = t('chat.complete');
   });
+  updateRunState({type: 'localized'});
   feed.querySelectorAll('.message.tool').forEach(item => {
     updateToolMessage(item, {status: item.dataset.status || 'preparing'});
     const labels = item.querySelectorAll('.tool-section > span');

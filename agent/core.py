@@ -339,6 +339,17 @@ class AgentRunner:
 
                 client.stream_callback = publish_stream
                 response = client.chat(messages, TOOL_SCHEMAS)
+                if self._stop_event.is_set():
+                    run_outcome = "stopped"
+                    self.publish(
+                        "agent_status",
+                        {
+                            "project": project,
+                            "status": "stopped",
+                            "message": "Task stopped.",
+                        },
+                    )
+                    return
                 self._publish_usage(project, getattr(client, "last_usage", None))
                 assistant_message = sanitize_assistant_message(
                     response["choices"][0]["message"]
