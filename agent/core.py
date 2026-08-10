@@ -10,16 +10,23 @@ import uuid
 from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 from agent.constraints import ConstraintStore, ModelConstraintValidator
-from agent.designspec import DesignSpecStage, DesignSpecStore
+from agent.designspec import (
+    CONVERSATION_ROUTE,
+    DESIGN_CHANGE_ROUTE,
+    ClarificationRequest,
+    DesignSpecStage,
+    DesignSpecStore,
+)
 from agent.images import as_openai_image
 from agent.openai_client import OpenAICompatibleClient, sanitize_assistant_message
 from agent.prompt import get_system_prompt
 from agent.quality.errors import normalize_error
 from agent.quality.models import Attempt, EnvironmentInfo, ModelInfo
 from agent.quality.store import QualityError, QualityStore
-from agent.revisions import RevisionStore
+from agent.revisions import RevisionIntegrityError, RevisionStore
 from agent.settings import Settings
 from agent.tool_results import failure as tool_failure
 from agent.tool_results import success as tool_success
@@ -33,6 +40,13 @@ from agent.tools.terminal_tool import TerminalTool
 
 # Keep this injectable compatibility hook for existing integrations and tests.
 OpenRouterClient = OpenAICompatibleClient
+
+_CONVERSATION_PROMPT = """You are the read-only Conversation assistant for a local CAD project.
+Answer the user's informational question using the current DesignSpec, project
+state, and conversation context. You have no CAD, file, terminal, or DesignSpec
+write capability. Never propose or perform a model mutation in this route. If
+the user asks to change the Part, explain briefly that the request should be
+sent as a Design Change. Keep the answer concise and factual."""
 
 
 class ProjectTools:
@@ -173,14 +187,20 @@ class AgentRunner:
             return self._start_locked(project, message, image_paths or [])
 
     def _start_locked(
-        self, project: str, message: str, image_paths: list[Path]
+        self,
+        project: str,
+        message: str,
+        image_paths: list[Path],
+        pending_design_change: dict[str, Any] | None = None,
     ) -> bool:
         if (self._thread and self._thread.is_alive()) or self._pending_completions:
             return False
         self._stop_event.clear()
         self._active_project = project
         self._thread = threading.Thread(
-            target=self._run, args=(project, message, image_paths), daemon=True
+            target=self._run,
+            args=(project, message, image_paths, pending_design_change),
+            daemon=True,
         )
         self._thread.start()
         return True
@@ -195,11 +215,22 @@ class AgentRunner:
             previous_thread.join(timeout=2)
         project_dir = self.settings.workspace_root / project
         formatted = self._format_answer(question, answer)
+        pending_design_change = question.get("pending_design_change")
+        if not isinstance(pending_design_change, dict):
+            pending_design_change = None
         with self._lock:
             if (self._thread and self._thread.is_alive()) or self._pending_completions:
                 return False
             self._log(project_dir, "user", formatted)
-            if not self._start_locked(project, formatted, []):
+            self._append_api_message(
+                project_dir, {"role": "user", "content": formatted}
+            )
+            if not self._start_locked(
+                project,
+                formatted,
+                [],
+                pending_design_change=pending_design_change,
+            ):
                 return False
             self._waiting_questions.pop(project, None)
             (project_dir / ".agent_state.json").unlink(missing_ok=True)
@@ -253,6 +284,7 @@ class AgentRunner:
         project: str,
         message: str,
         image_paths: list[Path] | None = None,
+        pending_design_change: dict[str, Any] | None = None,
     ) -> None:
         self.publish(
             "agent_status",
@@ -310,6 +342,21 @@ class AgentRunner:
                     raise ValueError(
                         "The structured DesignSpec Demo supports text-only requests."
                     )
+                current = DesignSpecStore(project_dir).read()
+                stage = DesignSpecStage(client, self._stop_event)
+                if pending_design_change is None:
+                    classification = stage.classify(
+                        message,
+                        current=current,
+                        project_state=self._project_state(project_dir),
+                    )
+                    if classification.route == CONVERSATION_ROUTE:
+                        self._run_conversation(
+                            client, project, project_dir, message, current
+                        )
+                        return
+                    if classification.route != DESIGN_CHANGE_ROUTE:
+                        raise ValueError("Message routing returned an unsupported route.")
                 self.publish(
                     "agent_status",
                     {
@@ -318,10 +365,29 @@ class AgentRunner:
                         "message": "Preparing the Ready DesignSpec...",
                     },
                 )
-                current = DesignSpecStore(project_dir).read()
-                design_spec = DesignSpecStage(client, self._stop_event).generate(
-                    message, current
+                design_change_message = (
+                    self._designspec_resume_message(pending_design_change, message)
+                    if pending_design_change is not None
+                    else message
                 )
+                preparation = stage.generate(design_change_message, current)
+                if isinstance(preparation, ClarificationRequest):
+                    pending_state = self._pending_design_change_state(
+                        pending_design_change,
+                        message if pending_design_change is not None else None,
+                        initial_message=message,
+                    )
+                    self._wait_for_designspec_clarification(
+                        project,
+                        project_dir,
+                        preparation,
+                        pending_state,
+                        quality=quality,
+                        run_id=run_id,
+                    )
+                    run_outcome = "waiting_for_user"
+                    return
+                design_spec = preparation
                 DesignSpecStore(project_dir).save(design_spec)
                 self.publish("design_spec_updated", {"project": project})
             # Construct CAD capabilities only after the Ready DesignSpec is
@@ -591,6 +657,229 @@ class AgentRunner:
                     elif run_outcome == "failed":
                         self._finalize_run(project, "failed", run_error)
 
+    def _project_state(self, project_dir: Path) -> dict[str, object]:
+        """Return a small read-only summary for the Conversation route."""
+        head_id = None
+        try:
+            head = RevisionStore(project_dir).head()
+            head_id = head.id if head is not None else None
+        except (OSError, RevisionIntegrityError, ValueError):
+            head_id = None
+        try:
+            preview_available = (project_dir / "preview.stl").stat().st_size > 0
+        except OSError:
+            preview_available = False
+        try:
+            summary = (project_dir / "summary.md").read_text(encoding="utf-8")[:2000]
+        except OSError:
+            summary = ""
+        return {
+            "model_source_available": (project_dir / "model.py").is_file(),
+            "preview_available": preview_available,
+            "current_cad_revision": head_id,
+            "summary": summary,
+        }
+
+    def _conversation_context(
+        self,
+        project_dir: Path,
+        message: str,
+        current: dict | None,
+    ) -> list[dict]:
+        history = self._load_api_history(project_dir)
+        self._append_constraint_context(project_dir, history)
+        user_message = {"role": "user", "content": message}
+        if not history or history[-1] != user_message:
+            history.append(user_message)
+            self._append_api_message(project_dir, user_message)
+        current_content = (
+            json.dumps(current, ensure_ascii=False, sort_keys=True)
+            if current is not None
+            else "No current Ready DesignSpec is available."
+        )
+        context = [
+            {"role": "system", "content": _CONVERSATION_PROMPT},
+            {
+                "role": "user",
+                "content": (
+                    "<current_design_spec>\n"
+                    + current_content
+                    + "\n</current_design_spec>\n"
+                    "<project_state>\n"
+                    + json.dumps(
+                        self._project_state(project_dir),
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    )
+                    + "\n</project_state>"
+                ),
+            },
+        ]
+        return context + history
+
+    def _run_conversation(
+        self,
+        client: Any,
+        project: str,
+        project_dir: Path,
+        message: str,
+        current: dict | None,
+    ) -> None:
+        """Answer informational text without constructing or exposing CAD tools."""
+        messages = self._conversation_context(project_dir, message, current)
+        message_id = uuid.uuid4().hex
+        self.publish(
+            "agent_stream_start", {"project": project, "message_id": message_id}
+        )
+
+        def publish_stream(event: dict) -> None:
+            event_type = event.get("type")
+            if event_type not in {"content", "reasoning"}:
+                return
+            delta = event.get("delta")
+            if not isinstance(delta, str) or not delta:
+                return
+            self.publish(
+                f"agent_{event_type}_delta",
+                {"project": project, "message_id": message_id, "delta": delta},
+            )
+
+        client.stream_callback = publish_stream
+        response = client.chat(messages, [])
+        if self._stop_event.is_set():
+            self.publish(
+                "agent_status",
+                {"project": project, "status": "stopped", "message": "Task stopped."},
+            )
+            return
+        self._publish_usage(project, getattr(client, "last_usage", None))
+        assistant_message = sanitize_assistant_message(
+            response["choices"][0]["message"]
+        )
+        # No tool interface is supplied on this route; discard any malformed
+        # tool metadata rather than ever dispatching it.
+        assistant_message.pop("tool_calls", None)
+        content = assistant_message.get("content")
+        if not isinstance(content, str) or not content.strip():
+            raise ValueError("The Conversation did not return a text response.")
+        self.publish(
+            "agent_stream_end",
+            {"project": project, "message_id": message_id, "message": content},
+        )
+        self._append_api_message(project_dir, assistant_message)
+        self._complete(project, content)
+
+    @staticmethod
+    def _designspec_resume_message(
+        pending_design_change: dict[str, Any], answer: str
+    ) -> str:
+        original = pending_design_change.get("message")
+        original = original.strip() if isinstance(original, str) else ""
+        if not original:
+            original = "Design Change"
+        parts = ["Original Design Change:\n" + original]
+        previous_answers = pending_design_change.get("answers", [])
+        if isinstance(previous_answers, list):
+            for previous in previous_answers:
+                if isinstance(previous, str) and previous.strip():
+                    parts.append("Clarification answer:\n" + previous.strip())
+        if isinstance(answer, str) and answer.strip():
+            parts.append("Clarification answer:\n" + answer.strip())
+        return "\n\n".join(parts)
+
+    @staticmethod
+    def _pending_design_change_state(
+        pending_design_change: dict[str, Any] | None,
+        answer: str | None,
+        *,
+        initial_message: str,
+    ) -> dict[str, object]:
+        original = ""
+        previous_answers: list[str] = []
+        if isinstance(pending_design_change, dict):
+            candidate = pending_design_change.get("message")
+            if isinstance(candidate, str):
+                original = candidate.strip()
+            values = pending_design_change.get("answers", [])
+            if isinstance(values, list):
+                previous_answers = [
+                    value.strip()
+                    for value in values
+                    if isinstance(value, str) and value.strip()
+                ]
+        if not original:
+            original = initial_message.strip() or "Design Change"
+        if isinstance(answer, str) and answer.strip():
+            previous_answers.append(answer.strip())
+        return {"message": original, "answers": previous_answers}
+
+    def _persist_waiting_question(
+        self,
+        project: str,
+        project_dir: Path,
+        question_state: dict[str, object],
+    ) -> None:
+        state_path = project_dir / ".agent_state.json"
+        temporary_state = project_dir / ".agent_state.json.tmp"
+        with self._lock:
+            if self._stop_event.is_set():
+                raise RuntimeError("DesignSpec clarification was stopped.")
+            temporary_state.write_text(
+                json.dumps(
+                    {"status": "WAITING_FOR_USER", "waiting_question": question_state},
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            temporary_state.replace(state_path)
+            self._waiting_questions[project] = question_state.copy()
+
+    def _wait_for_designspec_clarification(
+        self,
+        project: str,
+        project_dir: Path,
+        clarification: ClarificationRequest,
+        pending_design_change: dict[str, object],
+        *,
+        quality: QualityStore | None,
+        run_id: str | None,
+    ) -> None:
+        original_message = pending_design_change.get("message")
+        if isinstance(original_message, str) and original_message.strip():
+            original_entry = {"role": "user", "content": original_message.strip()}
+            if original_entry not in self._load_api_history(project_dir):
+                self._append_api_message(project_dir, original_entry)
+        question_state: dict[str, object] = {
+            "title": clarification.title,
+            "questions": clarification.questions,
+            "pending_design_change": pending_design_change,
+        }
+        self._persist_waiting_question(project, project_dir, question_state)
+        QuestionTool(self.publish).ask(
+            project,
+            clarification.questions,
+            clarification.title,
+        )
+        question_text = "; ".join(
+            question.get("question", "")
+            for question in clarification.questions
+            if isinstance(question, dict)
+        )
+        self._log(project_dir, "assistant", f"Question: {question_text}")
+        self.publish(
+            "agent_status",
+            {
+                "project": project,
+                "status": "waiting_for_user",
+                "message": "Waiting for user input.",
+            },
+        )
+        if quality is not None and run_id is not None:
+            try:
+                quality.transition_run(run_id, status="waiting_for_user")
+            except QualityError:
+                pass
+
     def _context(
         self,
         project_dir: Path,
@@ -856,21 +1145,11 @@ class AgentRunner:
             result, _waiting = tools.question.execute(args, project=project)
             questions = normalize_questions(args)
             title = args.get("title", "")
-            question_state = {
+            question_state: dict[str, object] = {
                 "title": title.strip() if isinstance(title, str) else "",
                 "questions": questions,
             }
-            state_path = tools.project_dir / ".agent_state.json"
-            temporary_state = tools.project_dir / ".agent_state.json.tmp"
-            temporary_state.write_text(
-                json.dumps(
-                    {"status": "WAITING_FOR_USER", "waiting_question": question_state}
-                ),
-                encoding="utf-8",
-            )
-            temporary_state.replace(state_path)
-            with self._lock:
-                self._waiting_questions[project] = question_state
+            self._persist_waiting_question(project, tools.project_dir, question_state)
             return result, True
         if name == "file" and call_id:
             # Bind the tool-call ID so revision manifests can correlate with
