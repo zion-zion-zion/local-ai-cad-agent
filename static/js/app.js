@@ -19,6 +19,7 @@ const stopButton = document.querySelector('#stop');
 const questionArea = document.querySelector('#question-area');
 const viewer = new CadViewer(document.querySelector('#viewer'), document.querySelector('#dimensions'));
 const showInfoMessages = window.APP_CONFIG?.showInfoMessages ?? true;
+const structuredSpecEnabled = window.APP_CONFIG?.structuredSpec ?? false;
 const currentProject = window.APP_CONFIG?.projectName || '';
 
 let selectedFiles = [];
@@ -34,6 +35,9 @@ const reportIssueBtn = document.querySelector('#report-issue');
 const continueEditingBtn = document.querySelector('#continue-editing');
 const issueModal = document.querySelector('#issue-modal');
 const issueForm = document.querySelector('#issue-form');
+const designSpecPanel = document.querySelector('#design-spec-panel');
+const designSpecStatus = document.querySelector('#design-spec-status');
+const designSpecContent = document.querySelector('#design-spec-content');
 let isFinalizing = false;
 const agentStreams = new Map();
 const streamedTools = new Map();
@@ -254,6 +258,25 @@ async function api(path, options) {
   const data = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(data.error || t('chat.requestFailed'));
   return data;
+}
+
+async function loadCurrentDesignSpec(open = false) {
+  if (!structuredSpecEnabled || !currentProject) {
+    designSpecPanel.hidden = true;
+    return;
+  }
+  const data = await api(
+    `/api/projects/${encodeURIComponent(currentProject)}/designspec`,
+  );
+  if (!data.available || !data.design_spec) {
+    designSpecPanel.hidden = true;
+    designSpecContent.textContent = '';
+    return;
+  }
+  designSpecPanel.hidden = false;
+  designSpecStatus.textContent = t('chat.designSpecReady');
+  designSpecContent.textContent = JSON.stringify(data.design_spec, null, 2);
+  if (open) designSpecPanel.open = true;
 }
 
 async function loadCurrentPreview(previewId = '') {
@@ -1003,6 +1026,9 @@ onProjectEvent('preview_updated', data => {
   updateRunState({type: 'run_activity'});
   loadCurrentPreview(data.preview_id).catch(error => addMessage(error.message, 'error'));
 });
+onProjectEvent('design_spec_updated', () => {
+  loadCurrentDesignSpec(true).catch(error => addMessage(error.message, 'error'));
+});
 onProjectEvent('screenshot_request', data => {
   const path = `/api/projects/${encodeURIComponent(currentProject)}/screenshot`;
   const reply = payload => api(path, {
@@ -1058,6 +1084,7 @@ events.addEventListener('error', () => {
 
 async function initProject() {
   await loadHistory(currentProject);
+  await loadCurrentDesignSpec();
   loadCurrentPreview();
   await loadCurrentState();
 }
@@ -1572,6 +1599,7 @@ function refreshLocalizedApp() {
   });
   const questionSubmit = questionArea.querySelector('.question-submit');
   if (questionSubmit) questionSubmit.textContent = t('chat.reply');
+  if (designSpecStatus.textContent) designSpecStatus.textContent = t('chat.designSpecReady');
   questionArea.querySelectorAll('input[type="number"]').forEach(input => { input.placeholder = t('chat.numericValue'); });
   questionArea.querySelectorAll('input[type="text"]').forEach(input => { input.placeholder = t('chat.yourAnswer'); });
   questionArea.querySelectorAll('select').forEach(select => {

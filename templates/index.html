@@ -14,6 +14,13 @@
           <div class="brand"><a href="/" class="back-link" data-i18n="chat.back" data-i18n-title="chat.back">← 项目</a><h1>{{ project_name }}</h1><span id="connection-status" class="connection-status" data-i18n-title="chat.connecting"></span></div>
           <button id="language-toggle" type="button" class="language-toggle" aria-label="切换为英文" title="切换为英文">EN</button>
         </header>
+        <details id="design-spec-panel" class="design-spec-panel" hidden>
+          <summary>
+            <span data-i18n="chat.designSpec">DesignSpec</span>
+            <span id="design-spec-status" class="design-spec-status"></span>
+          </summary>
+          <pre id="design-spec-content" aria-readonly="true"></pre>
+        </details>
         <div id="chat-feed" class="chat-feed" aria-live="polite">
           <div class="empty-state">
             <strong id="project-empty-title">项目：{{ project_name }}</strong>
@@ -94,6 +101,7 @@
       window.APP_CONFIG = {
         projectName: {{ project_name | tojson }},
         showInfoMessages: {{ show_info_messages | tojson }},
+        structuredSpec: {{ structured_spec | tojson }},
       };
     </script>
     <script type="importmap">

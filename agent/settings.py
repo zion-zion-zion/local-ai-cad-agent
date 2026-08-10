@@ -38,6 +38,7 @@ class Settings:
     # ``None`` preserves inference for direct legacy Settings construction;
     # load_settings() sets this explicitly from the selected config section.
     openrouter_extensions: bool | None = None
+    structured_spec: bool = False
 
     @property
     def base_url(self) -> str:
@@ -78,6 +79,11 @@ class Settings:
     @property
     def force_provider(self) -> bool:
         return self.openrouter_force_provider
+
+    @property
+    def structured_spec_enabled(self) -> bool:
+        """Compatibility name for the structured-spec Demo flag."""
+        return self.structured_spec
 
     @property
     def is_openrouter(self) -> bool:
@@ -150,6 +156,9 @@ def load_settings(project_root: Path | None = None, home: Path | None = None) ->
     quality = config.get("quality", {})
 
     quality_enabled = _strict_bool(quality.get("enabled", True), "quality.enabled")
+    structured_spec = _strict_bool(
+        quality.get("structured_spec", False), "quality.structured_spec"
+    )
     quality_require_acceptance = _strict_bool(
         quality.get("require_acceptance_before_finalize", False),
         "quality.require_acceptance_before_finalize",
@@ -202,6 +211,7 @@ def load_settings(project_root: Path | None = None, home: Path | None = None) ->
         revision_retention_count=_non_negative_int(agent.get("revision_retention_count", 0), "agent.revision_retention_count"),
         quality_enabled=quality_enabled,
         quality_require_acceptance_before_finalize=quality_require_acceptance,
+        structured_spec=structured_spec,
     )
 
 

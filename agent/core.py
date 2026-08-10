@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from agent.constraints import ConstraintStore, ModelConstraintValidator
+from agent.designspec import DesignSpecStage, DesignSpecStore
 from agent.images import as_openai_image
 from agent.openai_client import OpenAICompatibleClient, sanitize_assistant_message
 from agent.prompt import get_system_prompt
@@ -262,9 +263,7 @@ class AgentRunner:
             },
         )
         project_dir = self.settings.workspace_root / project
-        tools = ProjectTools(project_dir, self.publish, self.settings)
-        with self._lock:
-            self._active_tools = tools
+        tools: ProjectTools | None = None
         quality: QualityStore | None = None
         run_id: str | None = None
         run_outcome: str | None = None
@@ -300,16 +299,47 @@ class AgentRunner:
                     "quality_run_started",
                     {"project": project, "run_id": run_id},
                 )
-            messages = self._context(project_dir, message, image_paths or [])
+            # The same client carries the structured-stage response into the
+            # existing CAD loop, which keeps provider/session behavior intact.
+            client = OpenRouterClient(self.settings)
+            client.stop_event = self._stop_event
+            client.session_id = f"{self.settings.session_prefix}:{project}"
+            design_spec = None
+            if self.settings.structured_spec:
+                if image_paths:
+                    raise ValueError(
+                        "The structured DesignSpec Demo supports text-only requests."
+                    )
+                self.publish(
+                    "agent_status",
+                    {
+                        "project": project,
+                        "status": "designspec",
+                        "message": "Preparing the Ready DesignSpec...",
+                    },
+                )
+                current = DesignSpecStore(project_dir).read()
+                design_spec = DesignSpecStage(client, self._stop_event).generate(
+                    message, current
+                )
+                DesignSpecStore(project_dir).save(design_spec)
+                self.publish("design_spec_updated", {"project": project})
+            # Construct CAD capabilities only after the Ready DesignSpec is
+            # stored. The flag-off path skips the structured stage entirely.
+            tools = ProjectTools(project_dir, self.publish, self.settings)
+            with self._lock:
+                self._active_tools = tools
+            messages = self._context(
+                project_dir,
+                message,
+                image_paths or [],
+                design_spec=design_spec,
+            )
             preview_id: str | None = None
             cad_error: str | None = None
             cad_fix_required = not self._model_is_built(project_dir)
             any_tool_used = False
             nudged_cad = False
-            # Keep one-argument construction compatible with test doubles and older integrations.
-            client = OpenRouterClient(self.settings)
-            client.stop_event = self._stop_event
-            client.session_id = f"{self.settings.session_prefix}:{project}"
             for _ in range(self.settings.agent_tool_call_limit):
                 if self._stop_event.is_set():
                     run_outcome = "stopped"
@@ -562,7 +592,11 @@ class AgentRunner:
                         self._finalize_run(project, "failed", run_error)
 
     def _context(
-        self, project_dir: Path, message: str, image_paths: list[Path]
+        self,
+        project_dir: Path,
+        message: str,
+        image_paths: list[Path],
+        design_spec: dict | None = None,
     ) -> list[dict]:
         history = self._load_api_history(project_dir)
         self._append_constraint_context(project_dir, history)
@@ -576,7 +610,22 @@ class AgentRunner:
         if not history or history[-1] != user_message:
             history.append(user_message)
             self._append_api_message(project_dir, user_message)
-        return [{"role": "system", "content": get_system_prompt()}] + history
+        context: list[dict] = [{"role": "system", "content": get_system_prompt()}]
+        if design_spec is not None:
+            context.append(
+                {
+                    "role": "user",
+                    "content": (
+                        "<ready_design_spec>\n"
+                        + json.dumps(
+                            design_spec, ensure_ascii=False, sort_keys=True
+                        )
+                        + "\n</ready_design_spec>\n"
+                        "Use this Ready DesignSpec as the authoritative modeling context."
+                    ),
+                }
+            )
+        return context + history
 
     @classmethod
     def _append_constraint_context(cls, project_dir: Path, history: list[dict]) -> None:

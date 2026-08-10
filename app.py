@@ -34,6 +34,7 @@ from werkzeug.exceptions import RequestEntityTooLarge
 
 from agent.constraints import ConstraintError, ConstraintStore, ModelConstraintValidator
 from agent.core import AgentRunner
+from agent.designspec import DesignSpecError, DesignSpecStore
 from agent.finalize import finalize_project
 from agent.images import store_images
 from agent.quality.errors import (
@@ -560,6 +561,7 @@ def create_app(settings: Settings | None = None) -> Flask:
             "index.html",
             project_name=name,
             show_info_messages=current.show_info_messages,
+            structured_spec=current.structured_spec,
         )
 
     @app.get("/api/projects")
@@ -843,6 +845,20 @@ def create_app(settings: Settings | None = None) -> Flask:
         if preview_id:
             return jsonify({"status": "rendering", "preview_id": preview_id})
         return jsonify({"status": "idle"})
+
+    @app.get("/api/projects/<project_name>/designspec")
+    @app.get("/api/projects/<project_name>/design-spec")
+    def project_designspec(project_name: str):
+        try:
+            project_dir = _project_path(settings, project_name)
+            design_spec = DesignSpecStore(project_dir).read()
+        except (ValueError, FileNotFoundError) as error:
+            return jsonify({"error": str(error)}), 404
+        except DesignSpecError as error:
+            return jsonify({"error": str(error)}), 422
+        if design_spec is None:
+            return jsonify({"available": False, "design_spec": None})
+        return jsonify({"available": True, "design_spec": design_spec})
 
     @app.get("/api/projects/<project_name>/history")
     def project_history(project_name: str):
