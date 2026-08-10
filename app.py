@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 from difflib import unified_diff
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 import yaml
 from dotenv import load_dotenv
@@ -412,6 +413,38 @@ def create_app(settings: Settings | None = None) -> Flask:
             value = value.split(":")[0]
         return value
 
+    def _same_origin(origin: str, host: str) -> bool:
+        """Compare an Origin URL with a Host header, including their ports."""
+        try:
+            parsed_origin = urlsplit(origin)
+            parsed_host = urlsplit(f"//{host}")
+            origin_hostname = parsed_origin.hostname
+            host_hostname = parsed_host.hostname
+            origin_port = parsed_origin.port
+            host_port = parsed_host.port
+        except ValueError:
+            return False
+        if parsed_origin.scheme not in {"http", "https"} or not origin_hostname:
+            return False
+        if not host_hostname:
+            return False
+        if parsed_origin.username is not None or parsed_origin.password is not None:
+            return False
+        if (
+            parsed_origin.path
+            or parsed_origin.query
+            or parsed_origin.fragment
+            or parsed_host.path
+            or parsed_host.query
+            or parsed_host.fragment
+        ):
+            return False
+        if origin_port is None:
+            origin_port = 443 if parsed_origin.scheme == "https" else 80
+        if host_port is None:
+            host_port = 443 if request.scheme == "https" else 80
+        return origin_hostname.lower() == host_hostname.lower() and origin_port == host_port
+
     @app.before_request
     def validate_origin():
         """Reject cross-origin mutation requests when bound to localhost.
@@ -421,7 +454,9 @@ def create_app(settings: Settings | None = None) -> Flask:
         malicious page on another origin cannot drive the local service.
 
         When the bind address is a wildcard (0.0.0.0, ::) the check falls back
-        to a same-origin comparison between the Host and Origin headers.
+        to a same-origin comparison between the Host and Origin headers. This
+        allows the app to be opened through its LAN/public IP without allowing
+        another origin to submit mutations.
         """
         if request.method in ("GET", "HEAD", "OPTIONS"):
             return None
@@ -436,9 +471,11 @@ def create_app(settings: Settings | None = None) -> Flask:
         _WILDCARD_BINDS = frozenset({"0.0.0.0", "::", ""})
         if bind_host in _WILDCARD_BINDS:
             # Wildcard bind — must be same-origin.
-            if origin and host and origin_name and origin_name != host_name:
+            if origin and (not host or not _same_origin(origin, host)):
                 return jsonify({"error": "Cross-origin requests are not allowed."}), 403
-            if host_name not in ("localhost", "127.0.0.1", "::1") or not host_name:
+            if not origin and host_name not in ("localhost", "127.0.0.1", "::1"):
+                return jsonify({"error": "Cross-origin requests are not allowed."}), 403
+            if not host_name:
                 return jsonify({"error": "Cross-origin requests are not allowed."}), 403
         else:
             allowed = {bind_host, "localhost", "127.0.0.1", "::1"}
