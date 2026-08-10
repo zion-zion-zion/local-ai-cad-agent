@@ -27,6 +27,57 @@ def test_project_lifecycle(tmp_path: Path):
     assert projects_data["projects"][0]["model_status"] == "none"
 
 
+def test_wildcard_bind_allows_same_origin_public_host(tmp_path: Path):
+    settings = Settings(tmp_path / "projects", "https://example.test", "test-model", 1, "0.0.0.0", 5050)
+    client = create_app(settings).test_client()
+
+    response = client.post(
+        "/api/projects/new",
+        json={"name": "remote-project"},
+        headers={
+            "Host": "124.16.70.239:5050",
+            "Origin": "http://124.16.70.239:5050",
+        },
+    )
+
+    assert response.status_code == 201
+    assert response.get_json() == {"project": "remote-project"}
+
+
+def test_wildcard_bind_rejects_different_origin(tmp_path: Path):
+    settings = Settings(tmp_path / "projects", "https://example.test", "test-model", 1, "0.0.0.0", 5050)
+    client = create_app(settings).test_client()
+
+    response = client.post(
+        "/api/projects/new",
+        json={"name": "blocked-project"},
+        headers={
+            "Host": "124.16.70.239:5050",
+            "Origin": "http://other.example:5050",
+        },
+    )
+
+    assert response.status_code == 403
+    assert not (settings.workspace_root / "blocked-project").exists()
+
+
+def test_wildcard_bind_rejects_same_host_with_different_port(tmp_path: Path):
+    settings = Settings(tmp_path / "projects", "https://example.test", "test-model", 1, "0.0.0.0", 5050)
+    client = create_app(settings).test_client()
+
+    response = client.post(
+        "/api/projects/new",
+        json={"name": "wrong-port"},
+        headers={
+            "Host": "124.16.70.239:5050",
+            "Origin": "http://124.16.70.239:5051",
+        },
+    )
+
+    assert response.status_code == 403
+    assert not (settings.workspace_root / "wrong-port").exists()
+
+
 def test_chat_ignores_client_supplied_routing_preferences(tmp_path: Path, monkeypatch):
     settings = Settings(tmp_path / "projects", "https://example.test", "openai/gpt-4o-mini", 1, "127.0.0.1", 5000)
     app = create_app(settings)

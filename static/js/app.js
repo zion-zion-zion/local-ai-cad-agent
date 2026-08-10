@@ -1,4 +1,5 @@
 import { CadViewer } from './viewer.js';
+import { createClientId } from './client-id.mjs';
 
 const i18n = window.CAD_I18N;
 const t = (key, values) => i18n.t(key, values);
@@ -449,7 +450,7 @@ async function loadHistory(projectName) {
 function addInfoMessage(type, data = {}) {
   if (type === 'agent_status') {
     addToolMessage({
-      call_id: `status-${data.timestamp || crypto.randomUUID()}`,
+      call_id: `status-${data.timestamp || createClientId()}`,
       tool: 'agent',
       status: data.status || 'info',
       result: data.message,
@@ -461,7 +462,7 @@ function addInfoMessage(type, data = {}) {
   if (type === 'agent_usage') {
     const cache = Number(data.cached_tokens || 0);
     addToolMessage({
-      call_id: `usage-${crypto.randomUUID()}`,
+      call_id: `usage-${createClientId()}`,
       tool: 'usage',
       status: 'completed',
       result: `${t('chat.promptTokens')} ${data.prompt_tokens ?? '—'} · ${t('chat.completionTokens')} ${data.completion_tokens ?? '—'} · ${t('chat.cachedTokens')} ${cache}`,
@@ -469,7 +470,7 @@ function addInfoMessage(type, data = {}) {
   }
   if (type === 'agent_stopped') {
     addToolMessage({
-      call_id: `stopped-${crypto.randomUUID()}`,
+      call_id: `stopped-${createClientId()}`,
       tool: 'agent',
       status: 'stopped',
       result: t('chat.agentStopped'),
@@ -496,7 +497,7 @@ chatForm.addEventListener('submit', async event => {
     addMessage(text, 'user');
     setThinking(true);
     message.value = '';
-    const idempotencyKey = crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const idempotencyKey = createClientId();
     const body = new FormData();
     body.append('project', currentProject);
     body.append('message', text);
