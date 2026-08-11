@@ -1,5 +1,10 @@
 -r requirements.txt
 pytest>=8.0,<10
 ruff>=0.9,<1
+mypy>=1.0,<2
+types-PyYAML>=6.0
 trimesh>=4.0,<5
 scipy>=1.10,<2
+# Vendored SimpleCADAPI test tooling and optional collision verifier.
+datamodel-code-generator==0.32.0
+python-fcl>=0.7.0.11

@@ -35,8 +35,16 @@ from werkzeug.exceptions import RequestEntityTooLarge
 from agent.constraints import ConstraintError, ConstraintStore, ModelConstraintValidator
 from agent.core import AgentRunner
 from agent.designspec import DesignSpecError, DesignSpecStore
+from agent.diagnostics import run_startup_diagnostics
 from agent.finalize import finalize_project
 from agent.images import store_images
+from agent.project_contract import (
+    CAD_BACKEND_NAME,
+    ProjectContractError,
+    new_project_metadata,
+    update_project_name,
+    validate_project_metadata,
+)
 from agent.quality.errors import (
     ACCEPTED_DECISION_TYPES,
     DECISION_TYPES,
@@ -49,7 +57,6 @@ from agent.quality.store import (
     QualityStore,
 )
 from agent.revisions import RevisionIntegrityError, RevisionStore
-from agent.sandbox import _BWRAP, seccomp_filter_fd
 from agent.settings import Settings, load_settings, resolve_api_key
 from agent.tools.cad_tool import CadTool
 
@@ -202,45 +209,8 @@ def _project_root() -> Path:
 
 
 def _run_preflight(settings: Settings) -> dict[str, Any]:
-    """Return a dict with preflight check results."""
-    checks: dict[str, bool | str] = {}
-
-    # API key for the configured OpenAI-compatible endpoint.
-    api_key, _ = resolve_api_key(settings)
-    checks["api_key"] = bool(api_key)
-
-    # Model configured
-    checks["model_configured"] = bool(settings.model.strip())
-
-    # Workspace writable
-    try:
-        settings.workspace_root.mkdir(parents=True, exist_ok=True)
-        probe = settings.workspace_root / ".preflight-probe"
-        probe.write_text("ok")
-        probe.unlink()
-        checks["workspace_writable"] = True
-    except OSError:
-        checks["workspace_writable"] = False
-
-    # Bubblewrap installed
-    checks["bwrap_installed"] = _BWRAP is not None
-
-    # seccomp functional
-    try:
-        fd = seccomp_filter_fd()
-        os.close(fd)
-        checks["seccomp"] = True
-    except RuntimeError:
-        checks["seccomp"] = False
-
-    # Python packages
-    try:
-        import build123d  # noqa: F401
-        checks["python_packages"] = True
-    except ImportError:
-        checks["python_packages"] = False
-
-    return checks
+    """Return actionable startup diagnostics for the supported CAD contract."""
+    return run_startup_diagnostics(settings)
 
 
 def _project_lock(app: Flask, project_name: str) -> threading.Lock:
@@ -378,7 +348,12 @@ def create_app(settings: Settings | None = None) -> Flask:
     app.config["SETTINGS"] = settings
     app.config["EVENT_BUS"] = bus
     app.config["AGENT_RUNNER"] = AgentRunner(settings, bus.publish)
-    app.config["PROJECT_LOCKS"]: dict[str, threading.Lock] = {}
+    # Run the CAD contract checks during application startup.  The runtime
+    # portion is cached by ``agent.diagnostics`` while workspace and LLM checks
+    # remain request-local, so test apps and setup-page transitions stay cheap.
+    app.config["STARTUP_DIAGNOSTICS"] = _run_preflight(settings)
+    project_locks: dict[str, threading.Lock] = {}
+    app.config["PROJECT_LOCKS"] = project_locks
     app.config["PROJECT_LOCKS_LOCK"] = threading.Lock()
 
     @app.after_request
@@ -546,6 +521,7 @@ def create_app(settings: Settings | None = None) -> Flask:
     def preflight():
         current_settings = app.config["SETTINGS"]
         checks = _run_preflight(current_settings)
+        app.config["STARTUP_DIAGNOSTICS"] = checks
         return jsonify(checks)
 
     @app.get("/project/<name>")
@@ -573,7 +549,13 @@ def create_app(settings: Settings | None = None) -> Flask:
             metadata = _read_project_metadata(item)
             projects.append({
                 "name": item.name,
+                "display_name": metadata.get("display_name", item.name),
                 "created_at": metadata.get("created_at"),
+                "project_identity": metadata.get("project_identity"),
+                "part_identity": metadata.get("part_identity"),
+                "project_schema_version": metadata.get("project_schema_version"),
+                "cad_backend": metadata.get("cad_backend"),
+                "model_contract_version": metadata.get("model_contract_version"),
                 "modified_at": _project_modified_at(item),
                 "model_status": _model_status(item),
             })
@@ -582,7 +564,12 @@ def create_app(settings: Settings | None = None) -> Flask:
     @app.post("/api/projects/new")
     def new_project():
         payload = request.get_json(silent=True) or {}
-        name = str(payload.get("name", "")).strip().lower().replace(" ", "-")
+        if any(key in payload for key in ("backend", "cad_backend", "backend_name")):
+            return jsonify(
+                {"error": "CAD backend selection is not supported; new projects use SimpleCADAPI."}
+            ), 400
+        display_name = str(payload.get("name", "")).strip()
+        name = display_name.lower().replace(" ", "-")
         if not PROJECT_NAME_RE.fullmatch(name):
             return jsonify({"error": "Use 1-63 lowercase letters, numbers, or hyphens."}), 400
         project_dir = settings.workspace_root / name
@@ -598,7 +585,9 @@ def create_app(settings: Settings | None = None) -> Flask:
                 )
                 (staging / "conversation.jsonl").write_text("", encoding="utf-8")
                 (staging / "api_messages.jsonl").write_text("", encoding="utf-8")
-                _write_project_metadata(staging, {"name": name, "created_at": _utc_now()})
+                metadata = new_project_metadata(name=name, display_name=display_name)
+                validate_project_metadata(metadata)
+                _write_project_metadata(staging, metadata)
                 staging.rename(project_dir)
         bus.publish("project_created", {"project": name})
         return jsonify({"project": name}), 201
@@ -631,7 +620,8 @@ def create_app(settings: Settings | None = None) -> Flask:
         except (ValueError, FileNotFoundError) as error:
             return jsonify({"error": str(error)}), 404
         payload = request.get_json(silent=True) or {}
-        new_name = str(payload.get("name", "")).strip().lower().replace(" ", "-")
+        new_display_name = str(payload.get("name", "")).strip()
+        new_name = new_display_name.lower().replace(" ", "-")
         if not PROJECT_NAME_RE.fullmatch(new_name):
             return jsonify({"error": "Use 1-63 lowercase letters, numbers, or hyphens."}), 400
         if new_name == project_name:
@@ -655,8 +645,16 @@ def create_app(settings: Settings | None = None) -> Flask:
             # mid-rename failure cannot leave project.json behind the rename.
             metadata = _read_project_metadata(project_dir)
             original_metadata = dict(metadata)
-            metadata["name"] = new_name
+            metadata = update_project_name(
+                metadata,
+                name=new_name,
+                display_name=new_display_name,
+            )
             metadata["created_at"] = metadata.get("created_at") or _utc_now()
+            try:
+                validate_project_metadata(metadata)
+            except ProjectContractError as error:
+                return jsonify({"error": f"Project has an unsupported CAD contract: {error}"}), 409
             summary_content: str | None = None
             summary_path = project_dir / "summary.md"
             if summary_path.is_file():
@@ -717,6 +715,15 @@ def create_app(settings: Settings | None = None) -> Flask:
             project_dir = _project_path(settings, project_name)
         except (ValueError, FileNotFoundError) as error:
             return jsonify({"error": str(error)}), 404
+        try:
+            validate_project_metadata(_read_project_metadata(project_dir))
+        except ProjectContractError as error:
+            return jsonify(
+                {
+                    "error": "Project has an unsupported CAD contract: "
+                    f"{error}. Create a new SimpleCADAPI project."
+                }
+            ), 409
         runner = app.config["AGENT_RUNNER"]
         if runner.waiting_question(project_name):
             return jsonify({"error": "Answer the pending question before sending another message."}), 409
@@ -1305,7 +1312,14 @@ def create_app(settings: Settings | None = None) -> Flask:
             })
 
             # Full sandboxed CAD run on the restored source.
-            cad = CadTool(project_dir, bus.publish, store)
+            metadata = _read_project_metadata(project_dir)
+            backend = metadata.get("cad_backend")
+            backend_name = (
+                CAD_BACKEND_NAME
+                if isinstance(backend, dict) and backend.get("name") == CAD_BACKEND_NAME
+                else "build123d"
+            )
+            cad = CadTool(project_dir, bus.publish, store, backend_name=backend_name)
             try:
                 metrics = cad.run()
             except (RuntimeError, ValueError, TypeError) as error:

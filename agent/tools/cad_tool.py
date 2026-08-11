@@ -30,6 +30,7 @@ def _read_script(name: str) -> str:
 
 RUNNER = _read_script("runner.py")
 RENDERER = _read_script("renderer.py")
+SIMPLECADAPI_RUNNER = _read_script("simplecadapi_runner.py")
 
 
 class CadOperationCancelled(RuntimeError):
@@ -60,8 +61,10 @@ class CadTool:
         project_dir: Path,
         publish: Callable[[str, dict], None] | None = None,
         revisions: RevisionStore | None = None,
+        backend_name: str = "build123d",
     ) -> None:
         self.project_dir = project_dir.resolve()
+        self.backend_name = backend_name
         self._publish = publish
         self._revisions = revisions or RevisionStore(project_dir)
         self._process: subprocess.Popen[str] | None = None
@@ -81,9 +84,19 @@ class CadTool:
             raise ValueError("model.py does not exist yet.")
         model_code = model_path.read_text(encoding="utf-8")
         FileTool.validate_model(model_code)
-        code = RUNNER
+        simplecadapi = self.backend_name == "SimpleCADAPI"
+        code = SIMPLECADAPI_RUNNER if simplecadapi else RUNNER
         if render:
-            code += RENDERER
+            if simplecadapi:
+                code += (
+                    "\nfrom simplecadapi import render_screenshot_rpath\n"
+                    "render_screenshot_rpath(\n"
+                    "    shapes=shape, output_path='render.png', image_size=(512, 512),\n"
+                    "    show_axes=False, show_legend=False, show_callouts=False,\n"
+                    ")\n"
+                )
+            else:
+                code += RENDERER
         target: Path | None = None
         if export_dir is not None:
             target = (self.project_dir / export_dir).resolve()
@@ -92,11 +105,19 @@ class CadTool:
             ):
                 raise ValueError("Export directory must be inside the active project.")
             target.mkdir(parents=True, exist_ok=True)
-            code += (
-                "\nPath('output').mkdir(exist_ok=True)\n"
-                "export_step(shape, 'output/model.step')\n"
-                "export_stl(shape, 'output/model.stl')\n"
-            )
+            if simplecadapi:
+                code += (
+                    "\nfrom simplecadapi import export_step, export_stl\n"
+                    "Path('output').mkdir(exist_ok=True)\n"
+                    "export_step(shape, 'output/model.step')\n"
+                    "export_stl(shape, 'output/model.stl')\n"
+                )
+            else:
+                code += (
+                    "\nPath('output').mkdir(exist_ok=True)\n"
+                    "export_step(shape, 'output/model.step')\n"
+                    "export_stl(shape, 'output/model.stl')\n"
+                )
 
         with tempfile.TemporaryDirectory(prefix="cad-agent-") as temporary:
             workspace = Path(temporary)

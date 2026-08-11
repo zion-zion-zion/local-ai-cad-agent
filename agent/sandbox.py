@@ -8,6 +8,8 @@ import shutil
 import sys
 from pathlib import Path
 
+from agent.project_contract import SIMPLECADAPI_SOURCE_ROOT
+
 _BWRAP = shutil.which("bwrap")
 _DENIED_SYSCALLS = (
     "socket",
@@ -90,6 +92,12 @@ def command(
     python_root = Path(sys.prefix).resolve()
     bind_mode = "--bind" if writable else "--ro-bind"
     seccomp_fd = seccomp_filter_fd()
+    vendored_sdk_available = SIMPLECADAPI_SOURCE_ROOT.is_dir()
+    pythonpath_args = (
+        ["--setenv", "PYTHONPATH", "/simplecadapi-src"]
+        if vendored_sdk_available
+        else []
+    )
     sandbox = [
         _BWRAP,
         "--die-with-parent",
@@ -108,28 +116,39 @@ def command(
         "--symlink", "usr/lib64", "/lib64",
         "--ro-bind", "/etc", "/etc",
         "--ro-bind", str(python_root), "/venv",
-        bind_mode, str(workspace), "/workspace",
-        "--chdir", "/workspace",
-        "--clearenv",
-        "--setenv", "HOME", "/tmp",
-        "--setenv", "PATH", "/venv/bin:/usr/bin:/bin",
-        "--setenv", "PYTHONDONTWRITEBYTECODE", "1",
-        "--setenv", "TMPDIR", "/tmp",
-        "--setenv", "LANG", "C.UTF-8",
-        # Keep BLAS thread pools within the sandbox process limit.
-        "--setenv", "OPENBLAS_NUM_THREADS", "1",
-        "--setenv", "OMP_NUM_THREADS", "1",
-        "--setenv", "MKL_NUM_THREADS", "1",
-        "--seccomp", str(seccomp_fd),
-        "--",
-        "/usr/bin/prlimit",
-        f"--cpu={timeout_seconds + 5}",
-        "--fsize=536870912",
-        "--nofile=128",
-        "--nproc=64",
-        "--as=8589934592",
-        "--",
-        "/venv/bin/python",
-        *arguments,
     ]
+    if vendored_sdk_available:
+        sandbox.extend(
+            [
+                "--ro-bind", str(SIMPLECADAPI_SOURCE_ROOT.resolve()), "/simplecadapi-src",
+            ]
+        )
+    sandbox.extend(
+        [
+            bind_mode, str(workspace), "/workspace",
+            "--chdir", "/workspace",
+            "--clearenv",
+            "--setenv", "HOME", "/tmp",
+            "--setenv", "PATH", "/venv/bin:/usr/bin:/bin",
+            *pythonpath_args,
+            "--setenv", "PYTHONDONTWRITEBYTECODE", "1",
+            "--setenv", "TMPDIR", "/tmp",
+            "--setenv", "LANG", "C.UTF-8",
+            # Keep BLAS thread pools within the sandbox process limit.
+            "--setenv", "OPENBLAS_NUM_THREADS", "1",
+            "--setenv", "OMP_NUM_THREADS", "1",
+            "--setenv", "MKL_NUM_THREADS", "1",
+            "--seccomp", str(seccomp_fd),
+            "--",
+            "/usr/bin/prlimit",
+            f"--cpu={timeout_seconds + 5}",
+            "--fsize=536870912",
+            "--nofile=128",
+            "--nproc=64",
+            "--as=8589934592",
+            "--",
+            "/venv/bin/python",
+            *arguments,
+        ]
+    )
     return sandbox, seccomp_fd

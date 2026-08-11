@@ -22,6 +22,7 @@ from agent.designspec import (
 )
 from agent.images import as_openai_image
 from agent.openai_client import OpenAICompatibleClient, sanitize_assistant_message
+from agent.project_contract import CAD_BACKEND_NAME
 from agent.prompt import get_system_prompt
 from agent.quality.errors import normalize_error
 from agent.quality.models import Attempt, EnvironmentInfo, ModelInfo
@@ -66,7 +67,20 @@ class ProjectTools:
         self.revisions.reconcile()
         self.file = FileTool(project_dir, self.revisions, constraints=self.constraints)
         self.terminal = TerminalTool(project_dir)
-        self.cad = CadTool(project_dir, publish, self.revisions)
+        self.backend_name = "build123d"
+        try:
+            metadata = json.loads((project_dir / "project.json").read_text(encoding="utf-8"))
+            backend = metadata.get("cad_backend") if isinstance(metadata, dict) else None
+            if isinstance(backend, dict) and backend.get("name") == CAD_BACKEND_NAME:
+                self.backend_name = CAD_BACKEND_NAME
+        except (OSError, json.JSONDecodeError):
+            pass
+        self.cad = CadTool(
+            project_dir,
+            publish,
+            self.revisions,
+            backend_name=self.backend_name,
+        )
         self.question = QuestionTool(publish)
         # Experience tool lives at workspace scope, so we need the workspace root.
         # project_dir is <workspace>/<project>; parent yields the workspace.
@@ -400,6 +414,7 @@ class AgentRunner:
                 message,
                 image_paths or [],
                 design_spec=design_spec,
+                backend_name=tools.backend_name,
             )
             preview_id: str | None = None
             cad_error: str | None = None
@@ -886,6 +901,7 @@ class AgentRunner:
         message: str,
         image_paths: list[Path],
         design_spec: dict | None = None,
+        backend_name: str = "build123d",
     ) -> list[dict]:
         history = self._load_api_history(project_dir)
         self._append_constraint_context(project_dir, history)
@@ -899,7 +915,9 @@ class AgentRunner:
         if not history or history[-1] != user_message:
             history.append(user_message)
             self._append_api_message(project_dir, user_message)
-        context: list[dict] = [{"role": "system", "content": get_system_prompt()}]
+        context: list[dict] = [
+            {"role": "system", "content": get_system_prompt(backend_name=backend_name)}
+        ]
         if design_spec is not None:
             context.append(
                 {

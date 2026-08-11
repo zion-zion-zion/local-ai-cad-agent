@@ -1,5 +1,11 @@
 """SimpleCAD API: a simplified OCP-native Python CAD modeling API."""
 
+# Keep the runtime identity available when the vendored ``src`` tree is used
+# directly (for example by the Bubblewrap CAD sandbox) where package metadata
+# is not installed yet.  The value is kept in sync with ``pyproject.toml`` by
+# the application startup diagnostics.
+__version__ = "2.0.4b1"
+
 from .core import (
     # 核心类
     CoordinateSystem,

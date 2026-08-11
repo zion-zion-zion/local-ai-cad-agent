@@ -1,0 +1,217 @@
+"""Durable project and CAD-runtime contract for new SimpleCADAPI projects.
+
+This module is deliberately independent from Flask.  Project metadata is a
+small persisted contract, while the runtime helpers make the repository-local
+SDK the only supported import source even when another package with the same
+name is installed in the virtual environment.
+"""
+
+from __future__ import annotations
+
+import json
+import re
+import sys
+import uuid
+from collections.abc import Mapping
+from datetime import datetime, timezone
+from importlib import import_module
+from pathlib import Path
+from typing import Any
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+SIMPLECADAPI_ROOT = PROJECT_ROOT / "SimpleCADAPI"
+SIMPLECADAPI_SOURCE_ROOT = SIMPLECADAPI_ROOT / "src"
+SIMPLECADAPI_PACKAGE_ROOT = SIMPLECADAPI_SOURCE_ROOT / "simplecadapi"
+SIMPLECADAPI_PYPROJECT = SIMPLECADAPI_ROOT / "pyproject.toml"
+
+PROJECT_SCHEMA_VERSION = "1.0"
+MODEL_CONTRACT_VERSION = "1.0"
+SIMPLECADAPI_GRAPH_SCHEMA_VERSION = "2.0"
+CAD_BACKEND_NAME = "SimpleCADAPI"
+
+
+def _declared_version() -> str:
+    """Read the vendored package version without consulting site-packages."""
+    try:
+        content = SIMPLECADAPI_PYPROJECT.read_text(encoding="utf-8")
+        # The application supports Python 3.10.  The version field is
+        # intentionally parsed locally instead of asking package metadata,
+        # which could resolve a global installation.
+        match = re.search(r"(?m)^version\s*=\s*[\"']([^\"']+)[\"']", content)
+        version = match.group(1) if match else None
+    except OSError:
+        version = None
+    if not isinstance(version, str) or not version.strip():
+        # Keep diagnostics actionable if a checkout is incomplete.  The
+        # version is intentionally not guessed from a global distribution.
+        return "unknown"
+    return version.strip()
+
+
+SIMPLECADAPI_VERSION = _declared_version()
+
+# Public names used by the bootstrap diagnostics and by the first supported
+# model contract.  The import paths are part of the application contract; a
+# later SDK upgrade must update this list and its evidence deliberately.
+REQUIRED_PUBLIC_IMPORTS: tuple[tuple[str, str], ...] = (
+    ("simplecadapi", "model"),
+    ("simplecadapi", "capture_result"),
+    ("simplecadapi", "make_box_rsolid"),
+    ("simplecadapi", "make_part_rpart"),
+    ("simplecadapi", "Part"),
+    ("simplecadapi", "Solid"),
+    ("simplecadapi", "render_screenshot_rpath"),
+)
+
+
+class ProjectContractError(ValueError):
+    """Raised when persisted project metadata cannot satisfy the contract."""
+
+
+def utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def normalize_display_name(value: str) -> str:
+    """Return a human-facing name while rejecting empty/control-line input."""
+    display_name = str(value).strip()
+    if not display_name:
+        raise ProjectContractError("Project display name must not be empty.")
+    if "\n" in display_name or "\r" in display_name:
+        raise ProjectContractError("Project display name must not contain line breaks.")
+    return display_name
+
+
+def vendored_source_is_available() -> bool:
+    return SIMPLECADAPI_PACKAGE_ROOT.is_dir() and (
+        SIMPLECADAPI_PACKAGE_ROOT / "__init__.py"
+    ).is_file()
+
+
+def ensure_vendored_import_path() -> Path:
+    """Put the repository-local SDK source ahead of every global install.
+
+    The function does not import the package.  That makes it safe to use from
+    diagnostics which need to report a missing optional dependency instead of
+    failing while importing the Flask application.
+    """
+    if not vendored_source_is_available():
+        raise ProjectContractError(
+            f"Vendored SimpleCADAPI source is missing at {SIMPLECADAPI_SOURCE_ROOT}."
+        )
+    source = str(SIMPLECADAPI_SOURCE_ROOT)
+    if source in sys.path:
+        sys.path.remove(source)
+    sys.path.insert(0, source)
+    return SIMPLECADAPI_SOURCE_ROOT
+
+
+def import_vendored_simplecadapi() -> Any:
+    """Import SimpleCADAPI and fail if Python resolved an unrelated package."""
+    ensure_vendored_import_path()
+    module = import_module("simplecadapi")
+    origin = getattr(module, "__file__", None)
+    if not origin:
+        raise ProjectContractError("SimpleCADAPI did not expose an import location.")
+    origin_path = Path(origin).resolve()
+    try:
+        origin_path.relative_to(SIMPLECADAPI_SOURCE_ROOT.resolve())
+    except ValueError as error:
+        raise ProjectContractError(
+            "SimpleCADAPI resolved outside the repository-local vendored source: "
+            f"{origin_path}"
+        ) from error
+    return module
+
+
+def new_project_metadata(
+    *,
+    name: str,
+    display_name: str | None = None,
+    created_at: str | None = None,
+) -> dict[str, Any]:
+    """Create the immutable metadata block for a new project.
+
+    ``name`` is a storage slug, not an identity.  UUID values are generated
+    once here and are never regenerated by rename or move operations.
+    """
+    storage_name = str(name).strip()
+    if not storage_name:
+        raise ProjectContractError("Project storage name must not be empty.")
+    human_name = normalize_display_name(display_name if display_name is not None else storage_name)
+    project_identity = str(uuid.uuid4())
+    part_identity = str(uuid.uuid4())
+    backend = {"name": CAD_BACKEND_NAME, "version": SIMPLECADAPI_VERSION}
+    return {
+        "schema_version": PROJECT_SCHEMA_VERSION,
+        "project_schema_version": PROJECT_SCHEMA_VERSION,
+        "project_identity": project_identity,
+        "project_id": project_identity,
+        "part_identity": part_identity,
+        "part_id": part_identity,
+        "name": storage_name,
+        "display_name": human_name,
+        "created_at": created_at or utc_now(),
+        "cad_backend": backend,
+        "cad_backend_name": CAD_BACKEND_NAME,
+        "cad_backend_version": SIMPLECADAPI_VERSION,
+        "model_contract_version": MODEL_CONTRACT_VERSION,
+        "simplecadapi_graph_schema_version": SIMPLECADAPI_GRAPH_SCHEMA_VERSION,
+    }
+
+
+def update_project_name(metadata: Mapping[str, Any], *, name: str, display_name: str) -> dict[str, Any]:
+    """Return metadata updated for a rename while preserving all identities."""
+    updated = dict(metadata)
+    updated["name"] = str(name).strip()
+    updated["display_name"] = normalize_display_name(display_name)
+    return updated
+
+
+def validate_project_metadata(metadata: Mapping[str, Any]) -> None:
+    """Validate the durable fields required by the new-project contract."""
+    if not isinstance(metadata, Mapping):
+        raise ProjectContractError("Project metadata must be a JSON object.")
+    for key in ("project_identity", "part_identity"):
+        value = metadata.get(key)
+        try:
+            uuid.UUID(str(value))
+        except (ValueError, AttributeError, TypeError) as error:
+            raise ProjectContractError(f"Project metadata field {key!r} is not a UUID.") from error
+    if metadata.get("project_id", metadata["project_identity"]) != metadata["project_identity"]:
+        raise ProjectContractError("Project metadata project_id does not match project_identity.")
+    if metadata.get("part_id", metadata["part_identity"]) != metadata["part_identity"]:
+        raise ProjectContractError("Project metadata part_id does not match part_identity.")
+    if str(metadata.get("project_schema_version", "")) != PROJECT_SCHEMA_VERSION:
+        raise ProjectContractError(
+            "Unsupported project schema version: "
+            f"{metadata.get('project_schema_version')!r}."
+        )
+    if str(metadata.get("model_contract_version", "")) != MODEL_CONTRACT_VERSION:
+        raise ProjectContractError(
+            "Unsupported model contract version: "
+            f"{metadata.get('model_contract_version')!r}."
+        )
+    backend = metadata.get("cad_backend")
+    if not isinstance(backend, Mapping):
+        raise ProjectContractError("Project metadata is missing cad_backend metadata.")
+    if backend.get("name") != CAD_BACKEND_NAME:
+        raise ProjectContractError(
+            f"Unsupported CAD backend {backend.get('name')!r}; expected {CAD_BACKEND_NAME}."
+        )
+    backend_version = backend.get("version")
+    if not isinstance(backend_version, str) or not backend_version.strip():
+        raise ProjectContractError(
+            "Project metadata is missing the CAD backend version."
+        )
+    if backend_version != SIMPLECADAPI_VERSION:
+        raise ProjectContractError(
+            "Unsupported CAD backend version "
+            f"{backend_version!r}; expected {SIMPLECADAPI_VERSION!r}."
+        )
+    normalize_display_name(str(metadata.get("display_name", metadata.get("name", ""))))
+
+
+def metadata_json(metadata: Mapping[str, Any]) -> str:
+    """Serialize metadata deterministically for diagnostics and audit logs."""
+    return json.dumps(dict(metadata), ensure_ascii=False, sort_keys=True, separators=(",", ":"))

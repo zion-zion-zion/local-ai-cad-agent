@@ -3,7 +3,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/Python-3.10%2B-blue)](https://www.python.org/)
 
-A local-first web app that lets you **chat with an AI agent to create parametric CAD models**. Built with [build123d](https://github.com/gumyr/build123d) for solid modeling, [Three.js](https://threejs.org/) for in-browser preview, and any OpenAI-compatible Chat Completions API for LLM access — all sandboxed with Bubblewrap.
+A local-first web app that lets you **chat with an AI agent to create parametric CAD models**. New projects use the repository-local [SimpleCADAPI](SimpleCADAPI/) runtime for solid modeling, [Three.js](https://threejs.org/) for in-browser preview, and any OpenAI-compatible Chat Completions API for LLM access — all sandboxed with Bubblewrap.
 
 <p align="center">
   <em>(screenshot coming soon)</em>
@@ -11,7 +11,7 @@ A local-first web app that lets you **chat with an AI agent to create parametric
 
 ## ✨ Features
 
-- **Chat-driven modeling** — Describe what you want in natural language; the agent writes and runs build123d Python code
+- **Chat-driven modeling** — Describe what you want in natural language; the agent writes and runs the project's SimpleCADAPI Model Source
 - **Live reasoning** — Watch the model's thinking stream in real-time while it works
 - **STL preview** — Rotate, pan, and inspect generated models directly in the browser
 - **Reference images** — Upload up to 5 images (10 MB each) to guide the agent
@@ -57,7 +57,9 @@ local-ai-cad-agent/
 │   ├── constraints.py         # User-owned parameter & feature pins
 │   ├── sandbox.py             # Bubblewrap workspace isolation
 │   ├── settings.py            # Config merging & Settings dataclass
-│   ├── prompt.py              # System prompt with build123d playbook
+│   ├── prompt.py              # System prompt and CAD modeling policy
+│   ├── diagnostics.py         # Startup runtime and sandbox diagnostics
+│   ├── project_contract.py    # Durable project/backend/model metadata
 │   ├── tool_schemas.py        # Operation-specific model tool contracts
 │   ├── tool_results.py        # Structured success and error envelopes
 │   ├── images.py              # Reference image normalization

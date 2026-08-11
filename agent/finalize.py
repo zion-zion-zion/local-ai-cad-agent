@@ -237,7 +237,19 @@ def _build_report(
 
 
 def finalize_project(project_dir: Path) -> dict[str, Any]:
-    cad = CadTool(project_dir)
+    backend_name = "build123d"
+    try:
+        metadata = json.loads((project_dir / "project.json").read_text(encoding="utf-8"))
+        backend = metadata.get("cad_backend") if isinstance(metadata, dict) else None
+        if isinstance(backend, dict) and backend.get("name") == "SimpleCADAPI":
+            backend_name = "SimpleCADAPI"
+    except (OSError, json.JSONDecodeError):
+        pass
+    cad = (
+        CadTool(project_dir, backend_name=backend_name)
+        if backend_name == "SimpleCADAPI"
+        else CadTool(project_dir)
+    )
 
     with tempfile.TemporaryDirectory(prefix=".finalize-", dir=project_dir) as temporary:
         staging_root = Path(temporary)

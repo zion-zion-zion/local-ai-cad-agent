@@ -2,24 +2,27 @@ import json
 from io import BytesIO
 from pathlib import Path
 
-import pytest
 from PIL import Image
-
-pytest.importorskip("build123d")
 
 from agent.settings import Settings
 from app import create_app
 
-MODEL_CODE = """from build123d import Align, Box, Cylinder
+MODEL_CODE = """from simplecadapi import capture_result, make_box_rsolid, make_part_rpart, model
 
 # Dimensions (mm)
 width = 60.0
 length = 40.0
 height = 8.0
 hole_diameter = 6.0
-body = Box(width, length, height, align=(Align.CENTER, Align.CENTER, Align.MIN))
-hole = Cylinder(hole_diameter / 2, height, align=(Align.CENTER, Align.CENTER, Align.MIN))
-result = body - hole
+
+@model(graph_id="mounting-bracket")
+def build_model():
+    body = make_box_rsolid(width=width - hole_diameter / 2, height=length, depth=height)
+    part = make_part_rpart(part_id="mounting_bracket", body=body)
+    capture_result(value=part)
+    return part
+
+model_result = build_model()
 """
 
 

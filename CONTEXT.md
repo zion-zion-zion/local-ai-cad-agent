@@ -25,15 +25,15 @@ A DesignSpec with no missing or conflicting information that blocks modeling. Re
 _Avoid_: Approved specification, final design
 
 **Part**:
-A single parameterized CAD object described by a DesignSpec. A Part does not contain an assembly, mates, or cross-part constraints.
-_Avoid_: Assembly, product
+A single parameterized CAD object described by a DesignSpec and represented by exactly one solid Body. A Part does not contain an assembly, mates, cross-part constraints, or multiple disconnected solids.
+_Avoid_: Assembly, product, compound
 
 **Design Parameter**:
 A named quantity used to define a Part. Its original value and unit are retained, while lengths are normalized to millimetres and angles to degrees for modeling.
 _Avoid_: Unnamed literal, source variable
 
 **Body**:
-The primary geometry of a Part before its Design Features are applied.
+The single solid geometry of a Part before its Design Features are applied.
 _Avoid_: Complete assembly, rendered mesh
 
 **Design Feature**:
@@ -67,3 +67,35 @@ _Avoid_: Fixed constraint, source pin
 **Protected Definition**:
 A user-controlled protection applied to a generated source parameter or named source feature. It protects source code and is separate from a Design Requirement.
 _Avoid_: Design Requirement, semantic constraint
+
+**CAD Backend**:
+The geometry engine that turns a Ready DesignSpec into a validated CAD Revision. A CAD Backend is an execution choice, not part of the user's design intent.
+_Avoid_: CAD core, renderer
+
+**Model Graph**:
+A replayable representation of the modeling operations and geometric relationships that produce one Part.
+_Avoid_: Source code, mesh
+
+**Preview**:
+A visual representation of a CAD Revision used to inspect the result before final export.
+_Avoid_: Final model, source artifact
+
+**Model Source**:
+The editable, executable description of one Part that is evaluated by a CAD Backend.
+_Avoid_: Prompt, preview
+
+**Model Result**:
+The evaluated outcome of a Model Source, including its geometry and any replayable Model Graph data.
+_Avoid_: Source revision, rendered image
+
+**Project Identity**:
+An immutable identifier for a CAD project that remains stable when its display name or storage location changes.
+_Avoid_: Project name, directory name
+
+**Replay**:
+The reproduction of a Model Result from its retained Model Graph without regenerating design intent.
+_Avoid_: Re-prompting, visual reconstruction
+
+**Model Plan**:
+A provisional sequence of modeling operations, API choices, and validation checks derived from a Ready DesignSpec for one Run.
+_Avoid_: DesignSpec, source file, user approval
