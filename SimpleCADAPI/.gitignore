@@ -1,0 +1,37 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+.env
+
+output/
+
+# Sandbox artifacts
+sandbox/
+design-doc/
+
+# Generated skills archives
+skills/*.tar.gz
+
+.DS_Store
+
+# CAD/export artifacts
+*.step
+*.stl
+examples.py
+
+# Browser viewer dependencies and build output
+viewer/node_modules/
+viewer/dist/
+viewer/pnpm-lock.yaml
+
+design-docs/
+
+**/.vite/
