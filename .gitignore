@@ -17,6 +17,7 @@ __pycache__/
 .ipynb_checkpoints/
 
 # Test, lint, coverage, and build artifacts
+tests/
 .pytest_cache/
 .ruff_cache/
 .coverage
@@ -68,9 +69,6 @@ CAD-Agent-Projects/
 projects/
 .forge/
 instance/
-
-# Local notes and reference documentation
-/docs/
 
 # Generated CAD workspaces and exports
 api_messages.jsonl

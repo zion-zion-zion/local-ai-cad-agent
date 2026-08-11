@@ -141,6 +141,7 @@ ERROR_TAXONOMY: dict[str, str] = {
     "REVISION_INTEGRITY_ERROR": CATEGORY_SYSTEM,
     "TOOL_EXECUTION_FAILED": CATEGORY_SYSTEM,
     "TOOL_CALL_LIMIT": CATEGORY_SYSTEM,
+    "CANCELLED": CATEGORY_SYSTEM,
 }
 
 # Legacy codes already emitted by the current tool layer, mapped into the
@@ -155,6 +156,7 @@ _LEGACY_MAPPING: dict[str, tuple[str, str]] = {
     "TIMEOUT": (CATEGORY_EXECUTION, PHASE_EXECUTION),
     "REVISION_INTEGRITY_ERROR": (CATEGORY_SYSTEM, PHASE_SOURCE),
     "TOOL_EXECUTION_FAILED": (CATEGORY_SYSTEM, PHASE_EXECUTION),
+    "CANCELLED": (CATEGORY_SYSTEM, PHASE_EXECUTION),
 }
 
 # Older phase labels used by the tool layer, mapped to the canonical phases.

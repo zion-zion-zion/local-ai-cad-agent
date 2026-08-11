@@ -7,6 +7,7 @@ from typing import Any
 
 from agent.constraints import ConstraintError
 from agent.revisions import RevisionIntegrityError
+from agent.tools.cad_tool import CadOperationCancelled
 
 
 def success(tool: str, data: Any) -> str:
@@ -57,6 +58,13 @@ def _classify(tool: str, error: Exception, message: str) -> tuple[str, str, bool
             "persistence",
             False,
             "Do not retry the same edit; revision history needs user attention.",
+        )
+    if isinstance(error, CadOperationCancelled):
+        return (
+            "CANCELLED",
+            "execution",
+            False,
+            "The CAD operation was stopped before it completed; no model diagnosis is available.",
         )
     if isinstance(error, AttributeError):
         return (

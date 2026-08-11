@@ -6,6 +6,7 @@ import pytest
 
 from agent.core import TOOL_SCHEMAS, AgentRunner, ProjectTools
 from agent.settings import Settings
+from agent.tools.cad_tool import CadOperationCancelled
 
 
 class FakeOpenRouterClient:
@@ -673,3 +674,34 @@ def test_failed_build_clears_preview_and_returns_structured_error(tmp_path: Path
     assert payload["ok"] is False
     assert payload["error"]["code"] == "CAD_BUILD_FAILED"
     assert payload["error"]["phase"] == "build"
+
+
+def test_stopped_build_is_not_marked_for_model_fix(tmp_path: Path):
+    project_root = tmp_path / "projects"
+    project = project_root / "demo"
+    project.mkdir(parents=True)
+    (project / "conversation.jsonl").write_text("", encoding="utf-8")
+    tools = ProjectTools(project, lambda *_: None)
+    tools.cad.build_and_verify = lambda: (_ for _ in ()).throw(
+        CadOperationCancelled("CAD operation was stopped before completion.")
+    )
+    runner = AgentRunner(
+        Settings(project_root, "https://example.test", "test", 1, "127.0.0.1", 5000),
+        lambda *_: None,
+    )
+    messages = []
+    run_call = {
+        "id": "run-1",
+        "function": {"name": "cad_build_and_verify", "arguments": "{}"},
+    }
+
+    preview_id, error, fix_required, _critique, _waiting = runner._process_tool_call(
+        tools, "demo", project, run_call, False, "old-preview", None, messages
+    )
+
+    assert preview_id is None
+    assert error is None
+    assert not fix_required
+    payload = json.loads(messages[-1]["content"])
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "CANCELLED"

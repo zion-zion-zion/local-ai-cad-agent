@@ -19,7 +19,7 @@ from PIL import Image, UnidentifiedImageError
 from agent.revisions import RevisionIntegrityError, RevisionStore
 from agent.sandbox import command as sandbox_command
 from agent.tools.file_tool import FileTool
-from agent.tools.terminal_tool import _drain_remaining, _stream_with_limit, _terminate, _TimedOut
+from agent.tools.terminal_tool import _stream_with_limit, _terminate, _TimedOut
 
 _SCRIPTS_DIR = Path(__file__).resolve().parent / "cad_scripts"
 
@@ -30,6 +30,10 @@ def _read_script(name: str) -> str:
 
 RUNNER = _read_script("runner.py")
 RENDERER = _read_script("renderer.py")
+
+
+class CadOperationCancelled(RuntimeError):
+    """Raised when a running CAD subprocess is stopped by the caller."""
 
 
 class CadTool:
@@ -62,6 +66,7 @@ class CadTool:
         self._revisions = revisions or RevisionStore(project_dir)
         self._process: subprocess.Popen[str] | None = None
         self._lock = threading.Lock()
+        self._cancel_requested = threading.Event()
         self._screenshot_lock = threading.Lock()
         self._screenshot_event = threading.Event()
         self._screenshot_data: dict[str, str] = {}
@@ -70,6 +75,7 @@ class CadTool:
     def _execute(
         self, export_dir: str | None = None, render: bool = False
     ) -> dict[str, Any]:
+        self._cancel_requested.clear()
         model_path = self.project_dir / "model.py"
         if not model_path.exists():
             raise ValueError("model.py does not exist yet.")
@@ -105,6 +111,10 @@ class CadTool:
             try:
                 try:
                     with self._lock:
+                        if self._cancel_requested.is_set():
+                            raise CadOperationCancelled(
+                                "CAD operation was stopped before it started."
+                            )
                         self._process = subprocess.Popen(
                             command,
                             text=True,
@@ -120,8 +130,16 @@ class CadTool:
                     stdout, stderr = _stream_with_limit(process, timeout=120)
                 finally:
                     with self._lock:
+                        cancelled = (
+                            self._cancel_requested.is_set()
+                            and process.returncode not in (None, 0)
+                        )
                         self._process = None
             except _TimedOut as error:
+                if self._cancel_requested.is_set():
+                    raise CadOperationCancelled(
+                        "CAD operation was stopped before completion."
+                    ) from error
                 self._record_build_failure("CAD operation timed out after 120 seconds.")
                 raise RuntimeError(
                     "CAD operation timed out after 120 seconds."
@@ -129,8 +147,17 @@ class CadTool:
             finally:
                 with self._lock:
                     self._process = None
+            if cancelled:
+                raise CadOperationCancelled(
+                    "CAD operation was stopped before completion."
+                )
             if process.returncode:
                 detail = self._failure_detail(stderr or stdout)
+                if detail == "Unknown CAD error.":
+                    detail = (
+                        "CAD subprocess exited without diagnostics "
+                        f"(return code {process.returncode})."
+                    )
                 self._record_build_failure(detail)
                 raise RuntimeError(f"CAD execution failed:\n{detail}")
 
@@ -387,6 +414,7 @@ class CadTool:
             return True
 
     def stop(self) -> None:
+        self._cancel_requested.set()
         with self._screenshot_lock:
             if self._pending_screenshot_id:
                 self._pending_screenshot_id = None

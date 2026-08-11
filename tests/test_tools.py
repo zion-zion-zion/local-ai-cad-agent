@@ -1,4 +1,5 @@
 import base64
+import os
 import threading
 import time
 from io import BytesIO
@@ -8,7 +9,7 @@ import pytest
 from PIL import Image
 
 from agent.revisions import RevisionStore
-from agent.tools.cad_tool import CadTool
+from agent.tools.cad_tool import CadOperationCancelled, CadTool
 from agent.tools.file_tool import FileTool
 from agent.tools.terminal_tool import TerminalTool
 
@@ -151,6 +152,57 @@ def test_cad_sandbox_does_not_inherit_api_key(tmp_path: Path, monkeypatch):
     )
 
     assert CadTool(tmp_path).run()["dimensions_mm"]["x"] == 1
+
+
+def test_cad_runner_caps_occt_thread_pool(tmp_path: Path):
+    pytest.importorskip("build123d")
+    (tmp_path / "model.py").write_text(
+        "from OCP.OSD import OSD_ThreadPool\n"
+        "from build123d import Box\n"
+        "assert OSD_ThreadPool.DefaultPool_s().NbThreads() <= 8\n"
+        "result = Box(1, 2, 3)\n",
+        encoding="utf-8",
+    )
+
+    assert CadTool(tmp_path).run()["dimensions_mm"] == {
+        "x": 1.0,
+        "y": 2.0,
+        "z": 3.0,
+    }
+
+
+def test_cad_stop_raises_cancellation_without_model_error(
+    tmp_path: Path, monkeypatch
+):
+    import agent.tools.cad_tool as cad_module
+
+    (tmp_path / "model.py").write_text(
+        "from build123d import Box\nresult = Box(1, 2, 3)\n",
+        encoding="utf-8",
+    )
+    cad = CadTool(tmp_path)
+
+    class FakeProcess:
+        returncode = -15
+
+    monkeypatch.setattr(
+        cad_module,
+        "sandbox_command",
+        lambda *_args, **_kwargs: (["/bin/true"], os.memfd_create("test")),
+    )
+    monkeypatch.setattr(
+        cad_module.subprocess,
+        "Popen",
+        lambda *_args, **_kwargs: FakeProcess(),
+    )
+    monkeypatch.setattr(
+        cad_module,
+        "_stream_with_limit",
+        lambda _process, timeout: (cad._cancel_requested.set() or ("", "")),
+    )
+
+    with pytest.raises(CadOperationCancelled, match="stopped"):
+        cad.run()
 
 
 def test_screenshot_requires_matching_one_time_request(tmp_path: Path):

@@ -4,6 +4,12 @@ import math
 from pathlib import Path
 
 from build123d import export_step, export_stl
+from OCP.OSD import OSD_ThreadPool
+
+# OpenCascade sizes its default pool from the host CPU count. The CAD process
+# runs under a deliberately small nproc limit, so cap the pool before any model
+# code can trigger a parallel kernel operation.
+OSD_ThreadPool.DefaultPool_s(8)
 
 namespace = {"__name__": "__main__", "__file__": "model.py"}
 model_code = Path("model.py").read_text(encoding="utf-8")

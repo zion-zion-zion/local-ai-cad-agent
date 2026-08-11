@@ -31,7 +31,7 @@ from agent.settings import Settings
 from agent.tool_results import failure as tool_failure
 from agent.tool_results import success as tool_success
 from agent.tool_schemas import TOOL_SCHEMAS
-from agent.tools.cad_tool import CadTool
+from agent.tools.cad_tool import CadOperationCancelled, CadTool
 from agent.tools.experience_tool import ExperienceTool
 from agent.tools.file_tool import FileTool
 from agent.tools.question_tool import QuestionTool, normalize_questions
@@ -1329,7 +1329,9 @@ class AgentRunner:
             )
         except Exception as error:  # noqa: BLE001 - Tool errors are useful LLM context.
             result, waiting = tool_failure(name, error), False
-            if self._is_cad_build(name, arguments):
+            if self._is_cad_build(name, arguments) and not isinstance(
+                error, CadOperationCancelled
+            ):
                 cad_error = str(error)
                 cad_fix_required = True
                 preview_id = None
@@ -1362,7 +1364,11 @@ class AgentRunner:
                     "call_id": call_id,
                     "tool": name,
                     "arguments": arguments,
-                    "status": "error",
+                    "status": (
+                        "cancelled"
+                        if isinstance(error, CadOperationCancelled)
+                        else "error"
+                    ),
                     "result": result,
                 },
             )
