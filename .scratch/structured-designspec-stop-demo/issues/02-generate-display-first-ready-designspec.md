@@ -4,7 +4,7 @@
 
 **Blocked by:** None — can start immediately.
 
-**Status:** ready-for-human
+**Status:** resolved
 
 - [x] The existing structured-spec feature flag is loaded by application settings and remains disabled by default.
 - [x] With the flag disabled, a chat request follows the existing direct Agent flow without requiring or inventing a DesignSpec.
@@ -18,3 +18,8 @@
 - [x] A project-scoped update event causes a read-only, collapsible DesignSpec view to display or refresh the current specification without requiring user approval.
 - [x] An application-level test with a temporary new project and deterministic Fake LLM proves the order: Design Change, Ready DesignSpec persistence, read-only API visibility, then entry into the existing CAD loop.
 - [x] A Demo-stage failure produces a readable error without adding migration, retry orchestration, rollback, or recovery behavior.
+
+## Comments
+
+- Implemented in commit `585b070` (`feat: add structured Ready DesignSpec pipeline`).
+- Reviewed together with the follow-up implementation commits; all acceptance items above are complete.

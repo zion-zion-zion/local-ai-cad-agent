@@ -4,7 +4,7 @@
 
 **Blocked by:** 02 — Generate and display the first Ready DesignSpec.
 
-**Status:** ready-for-human
+**Status:** resolved
 
 - [x] The lightweight structured stage classifies each supported text message as a Conversation or Design Change.
 - [x] A Conversation can answer from the current DesignSpec and project state but has no capability to write model source, execute CAD mutations, or replace the DesignSpec.
@@ -16,3 +16,8 @@
 - [x] The replacement is stored as the sole current Ready DesignSpec before the CAD Agent can apply the Design Change; no specification history is retained.
 - [x] The read-only API and collapsible client view expose the replacement after the project-scoped update event.
 - [x] External-behavior tests cover both routing outcomes and prove that only the Design Change path can mutate the DesignSpec or CAD model.
+
+## Comments
+
+- Implemented in commit `69eff8e` (`feat: resume design changes after clarification`).
+- Reviewed together with the completed structured-spec pipeline; all acceptance items above are complete.
